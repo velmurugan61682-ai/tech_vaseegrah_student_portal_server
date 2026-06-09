@@ -1,215 +1,177 @@
 const mongoose = require('mongoose');
-const dotenv = require('dotenv');
-const User = require('./models/User');
-const Attendance = require('./models/Attendance');
+const bcrypt = require('bcryptjs');
+require('dotenv').config();
+
+const Admin = require('./models/Admin');
+const Department = require('./models/Department');
+const Batch = require('./models/Batch');
+const Student = require('./models/Student');
 const Task = require('./models/Task');
-const Submission = require('./models/Submission');
+const TaskSubmission = require('./models/TaskSubmission');
+const Attendance = require('./models/Attendance');
 
-// Load environment variables
-dotenv.config();
-
-const seedData = async () => {
+const seed = async () => {
   try {
-    // Connect to database
+    console.log('🔌 Connecting to database for seeding...');
     await mongoose.connect(process.env.MONGO_URI);
-    console.log('MongoDB Connected for Seeding...');
+    console.log('✅ Connected to MongoDB Atlas');
 
-    // Drop old unique index if it exists in the users collection to prevent conflicts
-    try {
-      await mongoose.connection.db.collection('users').dropIndex('username_1');
-      console.log('Dropped old index username_1 successfully.');
-    } catch (e) {
-      console.log('Old index username_1 did not exist or could not be dropped, skipping.');
-    }
-
-    // Clear existing collections
-    console.log('Clearing database collections...');
-    await User.deleteMany({});
-    await Attendance.deleteMany({});
+    // Clean up existing database collections
+    console.log('🧹 Clearing existing database collections...');
+    await Admin.deleteMany({});
+    await Department.deleteMany({});
+    await Batch.deleteMany({});
+    await Student.deleteMany({});
     await Task.deleteMany({});
-    await Submission.deleteMany({});
-
-    console.log('Inserting seed records...');
+    await TaskSubmission.deleteMany({});
+    await Attendance.deleteMany({});
+    console.log('🧹 Cleaned database collections');
 
     // 1. Create Admin
-    const admin = await User.create({
-      name: 'Admin Provider',
-      email: 'admin@internhub.com',
-      password: 'password123',
-      phone: '9876543210',
+    console.log('👤 Creating Admin...');
+    const admin = new Admin({
+      name: 'Super Admin',
+      email: 'admin@techvaseegrah.com',
+      password: 'Admin@123',
       role: 'admin'
     });
-    console.log('Admin user created (email: admin@internhub.com, password: password123)');
+    await admin.save();
+    console.log('👤 Admin created');
 
-    // 2. Create Students
-    const studentsData = [
-      {
-        name: 'John Doe',
-        email: 'john@internhub.com',
-        password: 'password123',
-        phone: '9123456780',
-        role: 'student',
-        college: 'SRM University',
-        branch: 'CSE',
-        course: 'MERN Stack',
-        batch: '2026',
-        profilePhoto: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=60'
-      },
-      {
-        name: 'Jane Smith',
-        email: 'jane@internhub.com',
-        password: 'password123',
-        phone: '9234567890',
-        role: 'student',
-        college: 'VIT Chennai',
-        branch: 'IT',
-        course: 'Python',
-        batch: '2025',
-        profilePhoto: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=60'
-      },
-      {
-        name: 'Alice Johnson',
-        email: 'alice@internhub.com',
-        password: 'password123',
-        phone: '9345678901',
-        role: 'student',
-        college: 'Anna University',
-        branch: 'ECE',
-        course: 'Java',
-        batch: '2026',
-        profilePhoto: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&auto=format&fit=crop&q=60'
-      },
-      {
-        name: 'Bob Brown',
-        email: 'bob@internhub.com',
-        password: 'password123',
-        phone: '9456789012',
-        role: 'student',
-        college: 'IIT Madras',
-        branch: 'CSE',
-        course: 'AI & ML',
-        batch: '2026',
-        profilePhoto: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=60'
-      },
-      {
-        name: 'Charlie Green',
-        email: 'charlie@internhub.com',
-        password: 'password123',
-        phone: '9567890123',
-        role: 'student',
-        college: 'PSG Tech',
-        branch: 'EEE',
-        course: 'MERN Stack',
-        batch: '2025',
-        profilePhoto: ''
-      }
+    // 2. Create Departments
+    console.log('🏢 Creating Departments...');
+    const deptsData = [
+      { name: 'Computer Science and Engineering', code: 'CSE' },
+      { name: 'Electronics and Communication Engineering', code: 'ECE' },
+      { name: 'Mechanical Engineering', code: 'MECH' },
+      { name: 'Information Technology', code: 'IT' },
+      { name: 'Artificial Intelligence and Data Science', code: 'AIDS' }
     ];
-
-    const students = await User.create(studentsData);
-    console.log(`Created ${students.length} student records (password for all: password123)`);
-
-    // 3. Create historical attendance logs
-    const today = new Date();
-    
-    // Helper to format date offset
-    const getFormattedOffsetDate = (daysAgo) => {
-      const d = new Date(today);
-      d.setDate(today.getDate() - daysAgo);
-      const offset = d.getTimezoneOffset();
-      const local = new Date(d.getTime() - (offset * 60 * 1000));
-      return local.toISOString().split('T')[0];
-    };
-
-    const attendanceRecords = [];
-    
-    // Create attendance logs for the last 5 days
-    for (let dayOffset = 0; dayOffset < 5; dayOffset++) {
-      const dateStr = getFormattedOffsetDate(dayOffset);
-      
-      students.forEach((student, idx) => {
-        // Leave some students absent or unmarked on certain days
-        if (dayOffset === 0 && idx === 4) return; // Charlie unmarked today
-        
-        let status = 'present';
-        if (dayOffset === 1 && idx === 2) status = 'absent'; // Alice absent yesterday
-        if (dayOffset === 3 && idx === 1) status = 'absent'; // Jane absent 3 days ago
-
-        attendanceRecords.push({
-          studentId: student._id,
-          date: dateStr,
-          status,
-          markedByStudent: true,
-          markedAt: new Date(new Date(dateStr + 'T09:15:00').getTime() + (idx * 5 * 60 * 1000)) // staggered morning time
-        });
-      });
+    const depts = [];
+    for (const d of deptsData) {
+      const dept = new Department(d);
+      await dept.save();
+      depts.push(dept);
     }
+    console.log(`🏢 Created ${depts.length} departments`);
 
-    await Attendance.create(attendanceRecords);
-    console.log(`Created ${attendanceRecords.length} historical attendance logs`);
+    // 3. Create Batches (2024-26 and 2023-25 for each dept)
+    console.log('👥 Creating Batches...');
+    const batches = [];
+    for (const dept of depts) {
+      const b1 = new Batch({
+        name: '2024-26',
+        year: 2024,
+        department: dept._id
+      });
+      const b2 = new Batch({
+        name: '2023-25',
+        year: 2023,
+        department: dept._id
+      });
+      await b1.save();
+      await b2.save();
+      batches.push(b1, b2);
+    }
+    console.log(`👥 Created ${batches.length} batches`);
 
-    // 4. Create Tasks
-    const oneDay = 24 * 60 * 60 * 1000;
-    const taskList = [
-      {
-        title: 'React Hooks and State Management',
-        description: 'Read the documentation about useState and useEffect. Implement a dynamic counter component that increments and decrements, and fetches a random quote from an API inside useEffect on load.',
-        assignedTo: 'all',
-        dueDate: new Date(today.getTime() + 2 * oneDay),
-        priority: 'High',
-        createdBy: admin._id
-      },
-      {
-        title: 'Node.js Express Server Setup',
-        description: 'Initialize a new Node.js server. Install express, dotenv, cors, and nodemon. Setup a basic server listening on Port 5000 with a clean test endpoint "/" returning a success message.',
-        assignedTo: 'course',
-        course: 'MERN Stack',
-        dueDate: new Date(today.getTime() + 1 * oneDay),
-        priority: 'Medium',
-        createdBy: admin._id
-      },
-      {
-        title: 'Java Object-Oriented Exercises',
-        description: 'Create a Base class "Person" with properties name and age. Inherit "Student" and "Instructor" classes. Implement polymorphism with a virtual method "getDetails()". Verify using console outputs.',
-        assignedTo: 'course',
-        course: 'Java',
-        dueDate: new Date(today.getTime() + 3 * oneDay),
-        priority: 'Low',
-        createdBy: admin._id
-      }
+    // 4. Create 10 Students across departments and batches
+    console.log('👨‍🎓 Creating Students...');
+    const studentsData = [
+      { name: 'John Doe', email: 'john@techvaseegrah.com', rollNumber: 'TVP24CSE01', deptIndex: 0, batchIndex: 0 }, // CSE 2024-26
+      { name: 'Jane Smith', email: 'jane@techvaseegrah.com', rollNumber: 'TVP24CSE02', deptIndex: 0, batchIndex: 0 }, // CSE 2024-26
+      { name: 'Alice Johnson', email: 'alice@techvaseegrah.com', rollNumber: 'TVP23ECE01', deptIndex: 1, batchIndex: 3 }, // ECE 2023-25
+      { name: 'Bob Wilson', email: 'bob@techvaseegrah.com', rollNumber: 'TVP23ECE02', deptIndex: 1, batchIndex: 3 }, // ECE 2023-25
+      { name: 'Charlie Brown', email: 'charlie@techvaseegrah.com', rollNumber: 'TVP24MECH01', deptIndex: 2, batchIndex: 4 }, // MECH 2024-26
+      { name: 'David Miller', email: 'david@techvaseegrah.com', rollNumber: 'TVP23MECH02', deptIndex: 2, batchIndex: 5 }, // MECH 2023-25
+      { name: 'Emma Davis', email: 'emma@techvaseegrah.com', rollNumber: 'TVP24IT01', deptIndex: 3, batchIndex: 6 }, // IT 2024-26
+      { name: 'Frank Harris', email: 'frank@techvaseegrah.com', rollNumber: 'TVP23IT02', deptIndex: 3, batchIndex: 7 }, // IT 2023-25
+      { name: 'Grace Lee', email: 'grace@techvaseegrah.com', rollNumber: 'TVP24AIDS01', deptIndex: 4, batchIndex: 8 }, // AIDS 2024-26
+      { name: 'Henry Taylor', email: 'henry@techvaseegrah.com', rollNumber: 'TVP23AIDS02', deptIndex: 4, batchIndex: 9 } // AIDS 2023-25
     ];
 
-    const tasks = await Task.create(taskList);
-    console.log(`Published ${tasks.length} internship objectives`);
+    const students = [];
+    for (const s of studentsData) {
+      const studentDept = depts[s.deptIndex];
+      // batches are created sequentially, 2 per dept: CSE: 0, 1; ECE: 2, 3; MECH: 4, 5; IT: 6, 7; AIDS: 8, 9
+      const studentBatch = batches[s.batchIndex];
 
-    // 5. Create Task Submissions
-    const submissionsData = [
-      {
-        taskId: tasks[1]._id, // MERN Express task
-        studentId: students[0]._id, // John Doe (MERN Stack)
-        submissionText: 'I have completed the server setup. The code installs all listed modules. The test endpoint successfully responds at http://localhost:5000/ and handles CORS headers. Github repository link: https://github.com/johndoe/internhub-express-server',
-        submittedAt: new Date(today.getTime() - 12 * 60 * 60 * 1000), // 12 hours ago
-        status: 'approved',
-        adminFeedback: 'Excellent project structure and package setups. Good job!'
-      },
-      {
-        taskId: tasks[1]._id, // MERN Express task
-        studentId: students[4]._id, // Charlie Green (MERN Stack)
-        submissionText: 'I set up the express backend on Port 5000. It starts correctly. However, I am still troubleshooting CORS block errors when calling it from my frontend workspace. I will resolve and update soon.',
-        submittedAt: new Date(today.getTime() - 4 * 60 * 60 * 1000), // 4 hours ago
-        status: 'pending'
-      }
-    ];
+      const student = new Student({
+        name: s.name,
+        email: s.email,
+        password: 'Student@123',
+        rollNumber: s.rollNumber,
+        department: studentDept._id,
+        batch: studentBatch._id,
+        isActive: true,
+        profileImage: ''
+      });
+      await student.save();
+      students.push(student);
+    }
+    console.log(`👨‍🎓 Created ${students.length} students`);
 
-    await Submission.create(submissionsData);
-    console.log('Populated task submissions log');
+    // 5. Create 3 Sample Tasks
+    console.log('📋 Creating Tasks...');
+    
+    // Task 1: Assigned to all CSE 2024-26 Students (John, Jane)
+    const cseDept = depts[0];
+    const cse2024Batch = batches[0];
+    const cseStudents = students.filter(s => s.department.toString() === cseDept._id.toString() && s.batch.toString() === cse2024Batch._id.toString());
+    
+    const task1 = new Task({
+      title: 'MERN Stack - React Routing & Axios Integration',
+      description: 'Implement frontend routes using react-router-dom v6 and configure Axios interceptors for handling access tokens.',
+      department: cseDept._id,
+      batch: cse2024Batch._id,
+      assignedTo: cseStudents.map(s => s._id),
+      dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 days from now
+      createdBy: admin._id
+    });
+    await task1.save();
 
-    console.log('Seeding completed successfully!');
+    // Task 2: Assigned to ECE 2023-25 (Alice, Bob)
+    const eceDept = depts[1];
+    const ece2023Batch = batches[3];
+    const eceStudents = students.filter(s => s.department.toString() === eceDept._id.toString() && s.batch.toString() === ece2023Batch._id.toString());
+
+    const task2 = new Task({
+      title: 'IoT Sensor Node Configuration',
+      description: 'Program an ESP32 node to fetch local ambient temperature and push readings to an MQTT broker.',
+      department: eceDept._id,
+      batch: ece2023Batch._id,
+      assignedTo: eceStudents.map(s => s._id),
+      dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 days from now
+      createdBy: admin._id
+    });
+    await task2.save();
+
+    // Task 3: Assigned to everyone in AIDS 2024-26 (Grace)
+    const aidsDept = depts[4];
+    const aids2024Batch = batches[8];
+    const aidsStudents = students.filter(s => s.department.toString() === aidsDept._id.toString() && s.batch.toString() === aids2024Batch._id.toString());
+
+    const task3 = new Task({
+      title: 'Data Preprocessing and Exploratory Analysis',
+      description: 'Load the house prices dataset, clean missing entries, identify outliers, and visualize features correlation heatmap.',
+      department: aidsDept._id,
+      batch: aids2024Batch._id,
+      assignedTo: aidsStudents.map(s => s._id),
+      dueDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago (overdue)
+      createdBy: admin._id
+    });
+    await task3.save();
+
+    console.log('📋 Tasks created');
+    console.log('✅ Seeded! Admin: admin@techvaseegrah.com / Admin@123');
+    
+    await mongoose.disconnect();
+    console.log('🔌 Disconnected from database');
     process.exit(0);
-
   } catch (error) {
-    console.error('Seeding failure:', error);
+    console.error('❌ Seeding Error:', error);
     process.exit(1);
   }
 };
 
-seedData();
+seed();
