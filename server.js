@@ -21,25 +21,25 @@ app.use(cookieParser());
 
 // Enable CORS
 const allowedOrigins = [
-  "http://localhost:5173",
-  "http://localhost:5174",
-  "https://tech-vaseegrah-student-portal-client-cn8627vb2.vercel.app"
-];
+  'http://localhost:5173',
+  'http://localhost:5174',
+  process.env.CLIENT_URL
+]
+  .filter(Boolean)
+  .map((origin) => origin.replace(/\/+$/, ''));
 
 app.use(
   cors({
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
-
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
+    origin: (origin, callback) => {
+      const normalizedOrigin = origin ? origin.replace(/\/+$/, '') : origin;
+      if (!origin || allowedOrigins.includes(normalizedOrigin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
       }
-
-      return callback(new Error(`CORS blocked: ${origin}`));
     },
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"]
+    optionsSuccessStatus: 200
   })
 );
 
@@ -52,10 +52,15 @@ const submissions = require('./routes/submissionRoutes');
 
 // Mount routers
 app.use('/api/auth', auth);
+app.use('/auth', auth);
 app.use('/api/students', students);
+app.use('/students', students);
 app.use('/api/attendance', attendance);
+app.use('/attendance', attendance);
 app.use('/api/tasks', tasks);
+app.use('/tasks', tasks);
 app.use('/api/submissions', submissions);
+app.use('/submissions', submissions);
 
 // Basic test route
 app.get('/', (req, res) => {
