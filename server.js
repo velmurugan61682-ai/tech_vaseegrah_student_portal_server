@@ -87,6 +87,7 @@ app.use('/api/tasks', require('./routes/taskRoutes'));
 app.use('/api/branches', require('./routes/branchRoutes'));
 app.use('/api/reports', require('./routes/reportRoutes'));
 app.use('/api/logs', require('./routes/logRoutes'));
+app.use('/api/payments', require('./routes/paymentRoutes'));
 
 // Serve uploads statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

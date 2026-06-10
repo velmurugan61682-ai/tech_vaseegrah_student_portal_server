@@ -13,6 +13,14 @@ const Notification = require('./models/Notification');
 const Report = require('./models/Report');
 const Log = require('./models/Log');
 
+// New MERN collections
+const User = require('./models/User');
+const Internship = require('./models/Internship');
+const Payment = require('./models/Payment');
+const PaymentLog = require('./models/PaymentLog');
+const Announcement = require('./models/Announcement');
+const Certificate = require('./models/Certificate');
+
 const seed = async () => {
   try {
     console.log('🔌 Connecting to database for seeding...');
@@ -26,6 +34,14 @@ const seed = async () => {
     await Branch.deleteMany({});
     await Course.deleteMany({});
     await Batch.deleteMany({});
+    
+    // New collections cleanup
+    await User.deleteMany({});
+    await Internship.deleteMany({});
+    await Payment.deleteMany({});
+    await PaymentLog.deleteMany({});
+    await Announcement.deleteMany({});
+    await Certificate.deleteMany({});
     
     try {
       await mongoose.connection.db.dropCollection('attendances');
@@ -52,6 +68,15 @@ const seed = async () => {
     });
     await admin.save();
     console.log('👤 Admin created');
+
+    // Sync admin to User collection
+    const adminUser = new User({
+      name: admin.name,
+      email: admin.email,
+      password: admin.password,
+      role: 'admin'
+    });
+    await adminUser.save();
 
     // 2. Create Branches
     console.log('🏢 Creating Branches...');
@@ -83,7 +108,23 @@ const seed = async () => {
     }
     console.log(`🎓 Created ${courses.length} courses`);
 
-    // 4. Create Batches
+    // 4. Create Internships program tracks
+    console.log('💻 Creating Internship Program Tracks...');
+    const internships = [];
+    const internshipPrograms = [
+      { title: 'MERN Stack Developer', description: 'Full Stack web development using MongoDB, Express, React, and Node.js.', duration: '3 Months', price: 15000 },
+      { title: 'Python Developer', description: 'Python programming, data structures, and automation scripting.', duration: '3 Months', price: 12000 },
+      { title: 'AI & ML Engineer', description: 'Supervised/Unsupervised learning, neural networks, and model training.', duration: '3 Months', price: 18000 }
+    ];
+
+    for (const prog of internshipPrograms) {
+      const internship = new Internship(prog);
+      await internship.save();
+      internships.push(internship);
+    }
+    console.log(`💻 Created ${internships.length} internships`);
+
+    // 5. Create Batches
     console.log('👥 Creating Batches...');
     const batchNames = ['2023-25', '2024-26', '2025-27'];
     const batches = [];
@@ -98,7 +139,7 @@ const seed = async () => {
     }
     console.log(`👥 Created ${batches.length} batches`);
 
-    // 5. Create 10 Students across departments, branches, courses, and batches
+    // 6. Create 10 Students across departments, branches, courses, and batches
     console.log('👨‍🎓 Creating Students...');
     const studentsData = [
       { name: 'John Doe', email: 'john@techvaseegrah.com', phone: '9876543211', college: 'Anna University', department: 'Computer Science', branch: 'CSE', course: 'MERN Stack', batch: '2024-26', status: 'Active' },
@@ -121,7 +162,6 @@ const seed = async () => {
     endDate.setMonth(today.getMonth() + 1);
 
     for (const s of studentsData) {
-      // Calculate attendance and task completion percentage defaults
       let attRate = 95;
       let taskRate = 80;
       if (s.status === 'At Risk') {
@@ -154,14 +194,85 @@ const seed = async () => {
       await student.save();
       students.push(student);
 
+      // Sync student to User collection
+      const studentUser = new User({
+        name: student.name,
+        email: student.email,
+        password: student.password,
+        role: 'student'
+      });
+      await studentUser.save();
+
       // Increment branch & course & batch counters
       await Branch.findOneAndUpdate({ branchName: s.branch }, { $inc: { totalStudents: 1 } });
       await Course.findOneAndUpdate({ courseName: s.course }, { $inc: { totalStudents: 1 } });
       await Batch.findOneAndUpdate({ batchName: s.batch }, { $inc: { totalStudents: 1 } });
     }
-    console.log(`👨‍🎓 Created ${students.length} students`);
+    console.log(`👨‍🎓 Created and synchronized ${students.length} students`);
 
-    // 6. Create 3 Sample Tasks
+    // 7. Seed Payments
+    console.log('💰 Seeding Payments & Audit Logs...');
+    const payments = [];
+    const paymentMethods = ['UPI', 'Credit Card', 'Debit Card', 'Net Banking', 'Bank Transfer', 'Cash'];
+
+    for (let i = 0; i < students.length; i++) {
+      const student = students[i];
+      // Map student course string to the corresponding seeded Internship track
+      const matchingInternship = internships.find(intern => intern.title.includes(student.course)) || internships[0];
+
+      let status = 'Paid';
+      let discount = 0;
+
+      if (student.status === 'At Risk') {
+        status = 'Pending';
+      } else if (student.status === 'Inactive') {
+        status = 'Failed';
+      } else if (i % 3 === 0) {
+        status = 'Paid';
+        discount = 1500;
+      } else if (i % 4 === 0) {
+        status = 'Refunded';
+        discount = 500;
+      }
+
+      const finalAmount = matchingInternship.price - discount;
+      const paymentDate = new Date();
+      paymentDate.setDate(today.getDate() - (i * 3)); // Spread dates across recent weeks
+
+      const payment = new Payment({
+        studentId: student._id,
+        internshipId: matchingInternship._id,
+        studentName: student.name,
+        email: student.email,
+        phone: student.phone || '',
+        internshipTitle: matchingInternship.title,
+        amount: matchingInternship.price,
+        discount,
+        finalAmount,
+        paymentType: i % 2 === 0 ? 'Online Payment' : 'Offline Payment',
+        paymentMethod: paymentMethods[i % paymentMethods.length],
+        transactionId: status === 'Paid' || status === 'Refunded' ? `TXN${100000 + i}` : '',
+        paymentDate,
+        status,
+        notes: status === 'Refunded' ? 'Refunded due to customer claim.' : `Enrollment fees for ${matchingInternship.title}.`
+      });
+      await payment.save();
+      payments.push(payment);
+
+      // Create Payment Audit Log
+      const audit = new PaymentLog({
+        adminId: admin._id,
+        adminName: admin.name,
+        action: 'Payment Created',
+        newValue: payment.toObject(),
+        paymentId: payment._id,
+        timestamp: paymentDate
+      });
+      await audit.save();
+    }
+    console.log(`💰 Seeded ${payments.length} payment transactions and audit logs`);
+
+    // 8. Create 3 Sample Tasks
     console.log('📋 Creating Tasks...');
     const tasks = [];
 
@@ -171,7 +282,7 @@ const seed = async () => {
       description: 'Implement frontend routers using react-router-dom and configure Axios instance with API environment URL.',
       assignedTo: students.filter(s => s.course === 'MERN Stack').map(s => s._id),
       branch: 'CSE',
-      dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 days from now
+      dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
       priority: 'High',
       status: 'In Progress',
       createdBy: admin._id
@@ -185,7 +296,7 @@ const seed = async () => {
       description: 'Load housing datasets, replace null records, identify outliers, and plot features correlation heatmaps.',
       assignedTo: students.filter(s => s.course === 'Python').map(s => s._id),
       branch: 'ECE',
-      dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), // 2 days from now
+      dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
       priority: 'Medium',
       status: 'Pending',
       createdBy: admin._id
@@ -199,7 +310,7 @@ const seed = async () => {
       description: 'Train SVM, Random Forest and Gradient Boost models, tune hyper-parameters and compile F1 scores matrices.',
       assignedTo: students.filter(s => s.course === 'AI & ML').map(s => s._id),
       branch: 'AI&DS',
-      dueDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days ago
+      dueDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
       priority: 'High',
       status: 'Submitted',
       submittedAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000),
@@ -210,10 +321,10 @@ const seed = async () => {
 
     console.log(`📋 Created ${tasks.length} tasks`);
 
-    // 7. Seed Attendance logs for last 5 days
+    // 9. Seed Attendance logs for last 5 days
     console.log('📅 Seeding Attendance logs...');
     const attendanceRecords = [];
-    const checkInTimes = ['08:45 AM', '09:02 AM', '08:50 AM', '09:12 AM', '09:40 AM']; // 9:40 AM is late
+    const checkInTimes = ['08:45 AM', '09:02 AM', '08:50 AM', '09:12 AM', '09:40 AM'];
     const checkOutTimes = ['05:00 PM', '05:15 PM', '05:30 PM', '05:05 PM', '04:55 PM'];
 
     for (let dayOffset = 0; dayOffset < 5; dayOffset++) {
@@ -221,18 +332,14 @@ const seed = async () => {
       recordDate.setDate(today.getDate() - dayOffset);
       recordDate.setHours(0, 0, 0, 0);
 
-      // Skip Sunday
       if (recordDate.getDay() === 0) continue;
 
       for (const student of students) {
-        // Inactive students check-in rarely
         if (student.status === 'Inactive' && Math.random() > 0.15) {
-          continue; // simulate absent
+          continue;
         }
 
-        // At risk students check-in occasionally
         if (student.status === 'At Risk' && Math.random() > 0.6) {
-          // simulate absent record
           const att = new Attendance({
             studentId: student._id,
             date: recordDate,
@@ -247,7 +354,6 @@ const seed = async () => {
           continue;
         }
 
-        // Active students check in
         const timeIndex = Math.floor(Math.random() * checkInTimes.length);
         const checkIn = checkInTimes[timeIndex];
         const checkOut = checkOutTimes[timeIndex];
@@ -260,7 +366,7 @@ const seed = async () => {
           checkIn,
           checkOut,
           status,
-          remarks: isLate ? 'Checked in late due to traffic' : 'On time',
+          remarks: isLate ? 'Checked in late due to transport delay' : 'On time',
           markedByStudent: Math.random() > 0.5
         });
         await att.save();
@@ -269,15 +375,10 @@ const seed = async () => {
     }
     console.log(`📅 Generated ${attendanceRecords.length} attendance records`);
 
-    // 8. Seed Task Submissions
+    // 10. Seed Task Submissions
     console.log('🚀 Seeding Task Submissions...');
-    // We will generate submissions for task 3 (AI ML task, which is submitted) and task 1 (MERN task)
-    // Task 3 is assigned to students: Grace Lee (AI&DS), Emma Davis (CSE), Henry Taylor (AI&DS)
     const aiStudents = students.filter(s => s.course === 'AI & ML');
     for (const student of aiStudents) {
-      // Emma's submission is Approved
-      // Grace's submission is Pending
-      // Henry's submission is Rejected
       let subStatus = 'pending';
       let remark = '';
       if (student.name === 'Emma Davis') {
@@ -302,7 +403,6 @@ const seed = async () => {
       });
       await submission.save();
 
-      // Push submission into task nested submissions array for compatibility
       await Task.findByIdAndUpdate(task3._id, {
         $push: {
           submissions: {
@@ -317,7 +417,6 @@ const seed = async () => {
       });
     }
 
-    // Task 1 is MERN. Let's make John Doe submit a pending submission
     const mernStudents = students.filter(s => s.course === 'MERN Stack');
     if (mernStudents.length > 0) {
       const studentObj = mernStudents[0];
@@ -343,15 +442,31 @@ const seed = async () => {
         }
       });
     }
-
     console.log('🚀 Seeded submissions');
 
-    // 9. Seed Notification
+    // 11. Seed Notifications & Announcements
+    console.log('📢 Seeding Announcements...');
+    const announce1 = new Announcement({
+      title: 'Internship Payment Audits',
+      content: 'Please ensure all payments are completed by the end of this week. Online methods (UPI, Credit Cards) are preferred.',
+      postedBy: admin._id,
+      targetAudience: 'All'
+    });
+    await announce1.save();
+    
+    const announce2 = new Announcement({
+      title: 'MERN Stack Project Review',
+      content: 'MERN Stack interns have their first project milestone review on Friday. Be ready with your Github repositories.',
+      postedBy: admin._id,
+      targetAudience: 'MERN Stack'
+    });
+    await announce2.save();
+
     console.log('🔔 Seeding Notifications...');
     const notif1 = new Notification({
       recipient: students[0]._id,
       recipientModel: 'Student',
-      title: 'Welcome to InternHub',
+      title: 'Welcome to Tech Vaseegrah Student Portal',
       message: 'Your student portal access is fully set up. Good luck with your MERN Stack internship track!',
       isRead: false
     });
@@ -365,9 +480,23 @@ const seed = async () => {
       isRead: false
     });
     await notif2.save();
-    console.log('🔔 Notifications seeded');
 
-    // 10. Seed Report
+    // 12. Seed Certificates
+    console.log('🎓 Seeding Certificates...');
+    const activeMernStudent = students.find(s => s.status === 'Active' && s.course === 'MERN Stack');
+    if (activeMernStudent) {
+      const mernInternship = internships.find(intern => intern.title.includes('MERN Stack')) || internships[0];
+      const cert = new Certificate({
+        studentId: activeMernStudent._id,
+        internshipId: mernInternship._id,
+        certificateNumber: `TV-MERN-2026-${Math.floor(1000 + Math.random() * 9000)}`,
+        issueDate: new Date(),
+        pdfUrl: 'https://techvaseegrah.com/certificates/sample.pdf'
+      });
+      await cert.save();
+    }
+
+    // 13. Seed Report
     console.log('📊 Seeding Reports...');
     const report1 = new Report({
       title: 'Monthly Attendance Summary - June 2026',
@@ -381,7 +510,6 @@ const seed = async () => {
       format: 'csv'
     });
     await report1.save();
-    console.log('📊 Reports seeded');
 
     console.log('✅ Database Seeding completed successfully!');
     console.log('👤 Admin Login: admin@techvaseegrah.com / Admin@123');

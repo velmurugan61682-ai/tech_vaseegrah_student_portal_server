@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const Admin = require('../models/Admin');
 const Student = require('../models/Student');
 const Log = require('../models/Log');
+const User = require('../models/User');
 
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '7d' });
@@ -22,6 +23,15 @@ exports.registerAdmin = async (req, res) => {
     }
     const admin = new Admin({ name, email: email.toLowerCase(), password, phone });
     await admin.save();
+    
+    // Sync to User collection
+    const userCred = new User({
+      name,
+      email: email.toLowerCase(),
+      password: admin.password,
+      role: 'admin'
+    });
+    await userCred.save();
     
     const token = generateToken(admin._id);
     res.status(201).json({
@@ -92,6 +102,15 @@ exports.registerStudent = async (req, res) => {
       role: 'student'
     });
     await student.save();
+
+    // Sync to User collection
+    const userCred = new User({
+      name,
+      email: email.toLowerCase(),
+      password: student.password,
+      role: 'student'
+    });
+    await userCred.save();
 
     const token = generateToken(student._id);
 

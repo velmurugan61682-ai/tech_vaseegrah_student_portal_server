@@ -5,6 +5,7 @@ const Branch = require('../models/Branch');
 const Course = require('../models/Course');
 const Batch = require('../models/Batch');
 const bcrypt = require('bcryptjs');
+const Payment = require('../models/Payment');
 
 // @desc    Get Admin Dashboard Stats
 // @route   GET /api/admin/dashboard
@@ -104,6 +105,92 @@ exports.getDashboardStats = async (req, res) => {
       };
     });
 
+    // --- Payments Metrics & Charts ---
+    const totalPayments = await Payment.countDocuments();
+    
+    const paidStats = await Payment.aggregate([
+      { $match: { status: 'Paid' } },
+      { $group: { _id: null, total: { $sum: '$finalAmount' } } }
+    ]);
+    const paidAmount = paidStats.length > 0 ? paidStats[0].total : 0;
+
+    const pendingStats = await Payment.aggregate([
+      { $match: { status: 'Pending' } },
+      { $group: { _id: null, total: { $sum: '$finalAmount' } } }
+    ]);
+    const pendingAmount = pendingStats.length > 0 ? pendingStats[0].total : 0;
+
+    const onlineCount = await Payment.countDocuments({ paymentType: 'Online Payment' });
+    const offlineCount = await Payment.countDocuments({ paymentType: 'Offline Payment' });
+    const successfulCount = await Payment.countDocuments({ status: 'Paid' });
+    const successRate = totalPayments > 0 ? Math.round((successfulCount / totalPayments) * 100) : 100;
+
+    // Monthly revenue chart
+    const currentYear = new Date().getFullYear();
+    const monthlyStats = await Payment.aggregate([
+      { 
+        $match: { 
+          status: 'Paid',
+          paymentDate: { 
+            $gte: new Date(`${currentYear}-01-01`), 
+            $lte: new Date(`${currentYear}-12-31T23:59:59`) 
+          }
+        } 
+      },
+      {
+        $group: {
+          _id: { $month: '$paymentDate' },
+          amount: { $sum: '$finalAmount' }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthlyRevenue = monthNames.map((name, index) => {
+      const monthNum = index + 1;
+      const found = monthlyStats.find(item => item._id === monthNum);
+      return {
+        name,
+        Revenue: found ? found.amount : 0
+      };
+    });
+
+    // Payment status pie chart
+    const statusStats = await Payment.aggregate([
+      { $group: { _id: '$status', count: { $sum: 1 } } }
+    ]);
+    const paymentStatusPie = statusStats.map(item => ({
+      name: item._id,
+      value: item.count
+    }));
+
+    // Internship-wise revenue
+    const internshipStats = await Payment.aggregate([
+      { $match: { status: 'Paid' } },
+      {
+        $group: {
+          _id: '$internshipTitle',
+          revenue: { $sum: '$finalAmount' }
+        }
+      }
+    ]);
+    const internshipWiseRevenue = internshipStats.map(item => ({
+      name: item._id || 'Unspecified',
+      Revenue: item.revenue
+    }));
+
+    // Student payment trends
+    const trendsStats = await Payment.find({ status: 'Paid' })
+      .sort({ paymentDate: 1 })
+      .limit(10)
+      .select('paymentDate finalAmount studentName');
+    const studentPaymentTrends = trendsStats.map(item => ({
+      date: new Date(item.paymentDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      Amount: item.finalAmount,
+      studentName: item.studentName
+    }));
+
     res.status(200).json({
       success: true,
       stats: {
@@ -112,14 +199,25 @@ exports.getDashboardStats = async (req, res) => {
         absentToday: totalStudents - presentToday, // Count unmarked as absent
         activeTasks,
         completedTasks,
-        internshipProgress: totalStudents > 0 ? Math.round((students.filter(s => s.status === 'Active').length / totalStudents) * 100) : 100
+        internshipProgress: totalStudents > 0 ? Math.round((students.filter(s => s.status === 'Active').length / totalStudents) * 100) : 100,
+        totalPayments,
+        paidAmount,
+        pendingAmount,
+        monthlyRevenue: paidAmount,
+        onlinePayments: onlineCount,
+        offlinePayments: offlineCount,
+        paymentSuccessRate: successRate
       },
       // Charts arrays for Recharts
       charts: {
         studentsByCourse,
         studentsByBranch,
         attendanceAnalytics,
-        taskAnalytics
+        taskAnalytics,
+        monthlyRevenue,
+        paymentStatusPie,
+        internshipWiseRevenue,
+        studentPaymentTrends
       },
       todayAttendanceList,
       // Compatibility layers
@@ -244,6 +342,16 @@ exports.addStudent = async (req, res) => {
 
     await student.save();
 
+    // Sync to User collection
+    const User = require('../models/User');
+    const userCred = new User({
+      name,
+      email: email.toLowerCase(),
+      password: student.password,
+      role: 'student'
+    });
+    await userCred.save();
+
     // Increment counts
     if (branch) await Branch.findOneAndUpdate({ branchName: branch }, { $inc: { totalStudents: 1 } });
     if (course) await Course.findOneAndUpdate({ courseName: course }, { $inc: { totalStudents: 1 } });
@@ -322,6 +430,10 @@ exports.deleteStudent = async (req, res) => {
 
     const { branch, course, batch } = student;
     await Student.findByIdAndDelete(req.params.id);
+
+    // Sync deletion to User collection
+    const User = require('../models/User');
+    await User.findOneAndDelete({ email: student.email.toLowerCase() });
 
     // Decrement counters
     if (branch) await Branch.findOneAndUpdate({ branchName: branch }, { $inc: { totalStudents: -1 } });
