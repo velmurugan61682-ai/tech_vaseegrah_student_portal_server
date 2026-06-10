@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const http = require('http');
+const socketIO = require('socket.io');
 require('dotenv').config();
 
 const connectDB = require('./config/db');
@@ -43,12 +45,47 @@ app.use(express.urlencoded({ extended: true }));
 // Connect to Database
 connectDB();
 
+// Create HTTP Server for Socket.IO binding
+const server = http.createServer(app);
+
+// Setup Socket.IO
+const io = socketIO(server, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    credentials: true
+  }
+});
+
+// Socket.IO event handler
+io.on('connection', (socket) => {
+  console.log(`📡 Real-time Socket Client Connected: ${socket.id}`);
+
+  // Students/Admins join unique private room matching their mongoDB ID
+  socket.on('join', (userId) => {
+    socket.join(userId);
+    console.log(`👥 User ${userId} joined their socket room: ${socket.id}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`📡 Real-time Socket Client Disconnected: ${socket.id}`);
+  });
+});
+
+// Attach socket io instance to request object so controllers can access it
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+
 // API Routes
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/student', require('./routes/studentRoutes'));
 app.use('/api/attendance', require('./routes/attendanceRoutes'));
 app.use('/api/tasks', require('./routes/taskRoutes'));
+app.use('/api/branches', require('./routes/branchRoutes'));
+app.use('/api/reports', require('./routes/reportRoutes'));
 app.use('/api/logs', require('./routes/logRoutes'));
 
 // Serve uploads statically
@@ -70,7 +107,7 @@ app.use((err, req, res, next) => {
 
 // Start Server
 let PORT = parseInt(process.env.PORT, 10) || 5050;
-const server = app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 

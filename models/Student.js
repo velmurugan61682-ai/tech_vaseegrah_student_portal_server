@@ -7,10 +7,17 @@ const studentSchema = new mongoose.Schema({
   password: { type: String, required: true },
   phone: { type: String, default: '' },
   college: { type: String, default: '' },
+  department: { type: String, default: '' },
   branch: { type: String, default: '' },
-  batch: { type: String, default: '' },
   course: { type: String, default: '' },
+  batch: { type: String, default: '' },
+  internshipDuration: { type: String, default: '' }, // e.g. "3 Months"
+  startDate: { type: Date, default: null },
+  endDate: { type: Date, default: null },
+  attendancePercentage: { type: Number, default: 100 },
+  taskCompletionPercentage: { type: Number, default: 0 },
   profilePhoto: { type: String, default: '' },
+  status: { type: String, enum: ['Active', 'At Risk', 'Inactive'], default: 'Active' },
   role: { type: String, default: 'student' }
 }, { timestamps: true });
 
