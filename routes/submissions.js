@@ -60,6 +60,20 @@ router.post('/',
       await submission.save();
     }
 
+    const Student = require('../models/Student');
+    const studentObj = await Student.findById(student);
+    if (studentObj) {
+      const Log = require('../models/Log');
+      const log = new Log({
+        studentId: studentObj._id,
+        studentName: studentObj.name,
+        course: studentObj.course || '',
+        action: 'task_submit',
+        details: `Submitted task solution`
+      });
+      await log.save().catch(err => console.error('Failed to save activity log:', err));
+    }
+
     res.status(200).json({ success: true, data: submission });
   })
 );
@@ -111,7 +125,7 @@ router.get('/student/:studentId', verifyToken, asyncHandler(async (req, res) => 
 // @route   PUT /api/submissions/:id/approve
 // @access  Private/Admin
 router.put('/:id/approve', verifyToken, isAdmin, asyncHandler(async (req, res) => {
-  const submission = await TaskSubmission.findById(req.params.id);
+  const submission = await TaskSubmission.findById(req.params.id).populate('student');
   if (!submission) {
     return res.status(404).json({ success: false, message: 'Submission not found' });
   }
@@ -119,6 +133,18 @@ router.put('/:id/approve', verifyToken, isAdmin, asyncHandler(async (req, res) =
   submission.status = 'approved';
   submission.viewedByAdmin = true;
   await submission.save();
+
+  if (submission.student) {
+    const Log = require('../models/Log');
+    const log = new Log({
+      studentId: submission.student._id,
+      studentName: submission.student.name,
+      course: submission.student.course || '',
+      action: 'task_approved',
+      details: 'Submission approved by admin'
+    });
+    await log.save().catch(err => console.error('Failed to save activity log:', err));
+  }
 
   res.status(200).json({ success: true, data: submission, message: 'Submission approved successfully' });
 }));
@@ -128,7 +154,7 @@ router.put('/:id/approve', verifyToken, isAdmin, asyncHandler(async (req, res) =
 // @access  Private/Admin
 router.put('/:id/reject', verifyToken, isAdmin, asyncHandler(async (req, res) => {
   const { adminNote } = req.body;
-  const submission = await TaskSubmission.findById(req.params.id);
+  const submission = await TaskSubmission.findById(req.params.id).populate('student');
   if (!submission) {
     return res.status(404).json({ success: false, message: 'Submission not found' });
   }
@@ -138,7 +164,55 @@ router.put('/:id/reject', verifyToken, isAdmin, asyncHandler(async (req, res) =>
   submission.viewedByAdmin = true;
   await submission.save();
 
+  if (submission.student) {
+    const Log = require('../models/Log');
+    const log = new Log({
+      studentId: submission.student._id,
+      studentName: submission.student.name,
+      course: submission.student.course || '',
+      action: 'task_rejected',
+      details: `Submission rejected by admin: ${adminNote || ''}`
+    });
+    await log.save().catch(err => console.error('Failed to save activity log:', err));
+  }
+
   res.status(200).json({ success: true, data: submission, message: 'Submission rejected successfully' });
+}));
+
+// @desc    Review submission (approve/reject with feedback)
+// @route   PUT /api/submissions/:id/review
+// @access  Private/Admin
+router.put('/:id/review', verifyToken, isAdmin, asyncHandler(async (req, res) => {
+  const { status, adminFeedback } = req.body;
+  
+  if (!status || !['approved', 'rejected'].includes(status)) {
+    return res.status(400).json({ success: false, message: 'Please provide valid status (approved or rejected)' });
+  }
+
+  const submission = await TaskSubmission.findById(req.params.id).populate('student');
+  if (!submission) {
+    return res.status(404).json({ success: false, message: 'Submission not found' });
+  }
+
+  submission.status = status;
+  submission.adminFeedback = adminFeedback || '';
+  submission.adminNote = adminFeedback || '';
+  submission.viewedByAdmin = true;
+  await submission.save();
+
+  if (submission.student) {
+    const Log = require('../models/Log');
+    const log = new Log({
+      studentId: submission.student._id,
+      studentName: submission.student.name,
+      course: submission.student.course || '',
+      action: status === 'approved' ? 'task_approved' : 'task_rejected',
+      details: status === 'approved' ? 'Submission approved by admin' : `Submission rejected by admin: ${adminFeedback || ''}`
+    });
+    await log.save().catch(err => console.error('Failed to save activity log:', err));
+  }
+
+  res.status(200).json({ success: true, data: submission, message: `Submission reviewed successfully as ${status}` });
 }));
 
 // @desc    Grade submission marks

@@ -10,14 +10,20 @@ const { verifyToken, isAdmin } = require('../middleware/auth');
 // @route   POST /api/tasks
 // @access  Private/Admin
 router.post('/', verifyToken, isAdmin, asyncHandler(async (req, res) => {
-  let { title, description, department, batch, assignedTo, dueDate } = req.body;
+  let { title, description, department, batch, assignedTo, dueDate, assignmentType, course } = req.body;
 
   if (!title) {
     return res.status(400).json({ success: false, message: 'Please provide task title' });
   }
 
-  // If department + batch provided but no specific assignedTo, auto-find all students in that dept+batch
-  if ((!assignedTo || assignedTo.length === 0) && department && batch) {
+  // Resolve assignedTo students based on target scope
+  if (assignmentType === 'course' && course) {
+    const students = await Student.find({ course, isActive: true });
+    assignedTo = students.map(student => student._id);
+  } else if (assignmentType === 'all') {
+    const students = await Student.find({ isActive: true });
+    assignedTo = students.map(student => student._id);
+  } else if ((!assignedTo || assignedTo.length === 0) && department && batch) {
     const students = await Student.find({ department, batch, isActive: true });
     assignedTo = students.map(student => student._id);
   }
@@ -28,6 +34,8 @@ router.post('/', verifyToken, isAdmin, asyncHandler(async (req, res) => {
     department: department || null,
     batch: batch || null,
     assignedTo: assignedTo || [],
+    assignmentType: assignmentType || 'all',
+    course: course || null,
     dueDate,
     createdBy: req.user.id
   });
@@ -112,6 +120,102 @@ router.get('/', verifyToken, asyncHandler(async (req, res) => {
 
     return res.status(200).json({ success: true, data: tasksWithStatus });
   }
+}));
+
+// @desc    Get performance analytics for admin
+// @route   GET /api/tasks/performance
+// @access  Private/Admin
+router.get('/performance', verifyToken, isAdmin, asyncHandler(async (req, res) => {
+  const students = await Student.find().populate('department').populate('batch').sort({ name: 1 });
+  const tasks = await Task.find();
+  const submissions = await TaskSubmission.find().populate('student');
+
+  let totalAssigned = 0;
+  tasks.forEach(t => {
+    totalAssigned += (t.assignedTo || []).length;
+  });
+
+  const totalCompleted = submissions.length;
+  const totalApproved = submissions.filter(s => s.status === 'approved').length;
+
+  const markedSubmissions = submissions.filter(s => s.adminMark !== undefined && s.adminMark !== null);
+  const totalScoreSum = markedSubmissions.reduce((sum, s) => sum + s.adminMark, 0);
+  const avgScore = markedSubmissions.length > 0 ? Math.round(totalScoreSum / markedSubmissions.length) : 0;
+
+  // Group submissions by student ID
+  const subsByStudent = {};
+  submissions.forEach(s => {
+    if (!s.student) return;
+    const studentId = s.student._id.toString();
+    if (!subsByStudent[studentId]) {
+      subsByStudent[studentId] = [];
+    }
+    subsByStudent[studentId].push(s);
+  });
+
+  // Build student performance list
+  const studentPerformance = students.map(student => {
+    const studentId = student._id.toString();
+    const studentSubmissions = subsByStudent[studentId] || [];
+    
+    // Count tasks assigned to this student
+    const assignedCount = tasks.filter(t => (t.assignedTo || []).some(id => id.toString() === studentId)).length;
+    const completedCount = studentSubmissions.length;
+    const approvedCount = studentSubmissions.filter(s => s.status === 'approved').length;
+    const rate = assignedCount > 0 ? Math.round((approvedCount / assignedCount) * 100) : 100;
+
+    return {
+      _id: student._id,
+      name: student.name,
+      course: student.course || 'Unassigned',
+      assigned: assignedCount,
+      completed: completedCount,
+      approved: approvedCount,
+      rate
+    };
+  });
+
+  // Build course breakdown
+  const coursesMap = {};
+  students.forEach(student => {
+    const course = student.course || 'Unassigned';
+    if (!coursesMap[course]) {
+      coursesMap[course] = { course, totalStudents: 0, assigned: 0, completed: 0, approved: 0 };
+    }
+    coursesMap[course].totalStudents += 1;
+  });
+
+  studentPerformance.forEach(sp => {
+    const course = sp.course;
+    if (coursesMap[course]) {
+      coursesMap[course].assigned += sp.assigned;
+      coursesMap[course].completed += sp.completed;
+      coursesMap[course].approved += sp.approved;
+    }
+  });
+
+  const courseBreakdown = Object.values(coursesMap).map(c => {
+    const rate = c.assigned > 0 ? Math.round((c.approved / c.assigned) * 100) : 100;
+    return {
+      course: c.course,
+      assigned: c.assigned,
+      completed: c.completed,
+      approved: c.approved,
+      rate
+    };
+  });
+
+  res.status(200).json({
+    success: true,
+    stats: {
+      assigned: totalAssigned,
+      completed: totalCompleted,
+      approved: totalApproved,
+      avgScore
+    },
+    students: studentPerformance,
+    courseBreakdown
+  });
 }));
 
 // @desc    Get single task detail
