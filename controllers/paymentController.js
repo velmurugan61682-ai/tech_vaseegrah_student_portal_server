@@ -110,6 +110,14 @@ exports.createPayment = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Internship program not found' });
     }
 
+    // Duplicate Transaction Protection
+    if (transactionId) {
+      const existingPayment = await Payment.findOne({ transactionId });
+      if (existingPayment) {
+        return res.status(400).json({ success: false, message: 'Transaction ID already recorded' });
+      }
+    }
+
     const newPayment = new Payment({
       studentId,
       internshipId,
@@ -141,6 +149,10 @@ exports.createPayment = async (req, res) => {
     });
     await auditLog.save();
 
+    // Auto-generate receipt
+    const receiptController = require('./receiptController');
+    await receiptController.createReceiptFromPayment(newPayment);
+
     res.status(201).json({
       success: true,
       message: 'Payment record created successfully',
@@ -162,6 +174,14 @@ exports.updatePayment = async (req, res) => {
     const payment = await Payment.findById(paymentId);
     if (!payment) {
       return res.status(404).json({ success: false, message: 'Payment record not found' });
+    }
+
+    // Duplicate Transaction Protection
+    if (updates.transactionId && updates.transactionId !== payment.transactionId) {
+      const existingPayment = await Payment.findOne({ transactionId: updates.transactionId });
+      if (existingPayment) {
+        return res.status(400).json({ success: false, message: 'Transaction ID already recorded' });
+      }
     }
 
     const oldValue = payment.toObject();
@@ -219,6 +239,10 @@ exports.updatePayment = async (req, res) => {
         });
         await log.save();
       }
+
+      // Auto-generate/update receipt
+      const receiptController = require('./receiptController');
+      await receiptController.createReceiptFromPayment(payment);
     }
 
     res.status(200).json({
@@ -253,6 +277,12 @@ exports.updatePaymentStatus = async (req, res) => {
 
     payment.status = status;
     await payment.save();
+
+    // If approved/marked as Paid, auto-generate/update receipt
+    if (status === 'Paid') {
+      const receiptController = require('./receiptController');
+      await receiptController.createReceiptFromPayment(payment);
+    }
 
     // Log update
     const admin = await Admin.findById(req.user.id);

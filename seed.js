@@ -20,6 +20,7 @@ const Payment = require('./models/Payment');
 const PaymentLog = require('./models/PaymentLog');
 const Announcement = require('./models/Announcement');
 const Certificate = require('./models/Certificate');
+const Receipt = require('./models/Receipt');
 
 const seed = async () => {
   try {
@@ -42,6 +43,7 @@ const seed = async () => {
     await PaymentLog.deleteMany({});
     await Announcement.deleteMany({});
     await Certificate.deleteMany({});
+    await Receipt.deleteMany({});
     
     try {
       await mongoose.connection.db.dropCollection('attendances');
@@ -271,6 +273,10 @@ const seed = async () => {
         timestamp: paymentDate
       });
       await audit.save();
+
+      // Auto-generate receipt
+      const receiptController = require('./controllers/receiptController');
+      await receiptController.createReceiptFromPayment(payment);
     }
     console.log(`💰 Seeded ${payments.length} payment transactions and audit logs`);
 
