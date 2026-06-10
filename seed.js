@@ -69,8 +69,9 @@ const seed = async () => {
     await admin.save();
     console.log('👤 Admin created');
 
-    // Sync admin to User collection
+    // Sync admin to User collection with aligned ID
     const adminUser = new User({
+      _id: admin._id,
       name: admin.name,
       email: admin.email,
       password: admin.password,
@@ -194,8 +195,9 @@ const seed = async () => {
       await student.save();
       students.push(student);
 
-      // Sync student to User collection
+      // Sync student to User collection with aligned ID
       const studentUser = new User({
+        _id: student._id,
         name: student.name,
         email: student.email,
         password: student.password,

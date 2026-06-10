@@ -17,15 +17,16 @@ exports.registerAdmin = async (req, res) => {
     if (!name || !email || !password) {
       return res.status(400).json({ success: false, message: 'Please provide name, email, and password' });
     }
-    const existing = await Admin.findOne({ email: email.toLowerCase() });
+    const existing = await User.findOne({ email: email.toLowerCase() });
     if (existing) {
       return res.status(400).json({ success: false, message: 'Email already registered' });
     }
     const admin = new Admin({ name, email: email.toLowerCase(), password, phone });
     await admin.save();
     
-    // Sync to User collection
+    // Sync to User collection with aligned ID
     const userCred = new User({
+      _id: admin._id,
       name,
       email: email.toLowerCase(),
       password: admin.password,
@@ -80,7 +81,7 @@ exports.registerStudent = async (req, res) => {
     if (!name || !email || !password) {
       return res.status(400).json({ success: false, message: 'Please provide name, email, and password' });
     }
-    const existing = await Student.findOne({ email: email.toLowerCase() });
+    const existing = await User.findOne({ email: email.toLowerCase() });
     if (existing) {
       return res.status(400).json({ success: false, message: 'Email already registered' });
     }
@@ -103,8 +104,9 @@ exports.registerStudent = async (req, res) => {
     });
     await student.save();
 
-    // Sync to User collection
+    // Sync to User collection with aligned ID
     const userCred = new User({
+      _id: student._id,
       name,
       email: email.toLowerCase(),
       password: student.password,

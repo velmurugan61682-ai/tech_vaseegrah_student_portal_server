@@ -6,7 +6,7 @@ const verifyToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, message: 'No token provided' });
+      return res.status(401).json({ success: false, message: 'Session expired. Please login again.' });
     }
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -17,7 +17,7 @@ const verifyToken = async (req, res, next) => {
       user = await Student.findById(decoded.id);
     }
     if (!user) {
-      return res.status(401).json({ success: false, message: 'Unauthorized access' });
+      return res.status(401).json({ success: false, message: 'Session expired. Please login again.' });
     }
     
     req.user = {
@@ -29,7 +29,7 @@ const verifyToken = async (req, res, next) => {
     };
     next();
   } catch (err) {
-    return res.status(401).json({ success: false, message: 'Invalid token' });
+    return res.status(401).json({ success: false, message: 'Session expired. Please login again.' });
   }
 };
 

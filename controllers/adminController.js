@@ -312,7 +312,8 @@ exports.addStudent = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please fill in required fields (Name, Email, Password)' });
     }
 
-    const existing = await Student.findOne({ email: email.toLowerCase() });
+    const User = require('../models/User');
+    const existing = await User.findOne({ email: email.toLowerCase() });
     if (existing) {
       return res.status(400).json({ success: false, message: 'Email address already registered' });
     }
@@ -342,9 +343,9 @@ exports.addStudent = async (req, res) => {
 
     await student.save();
 
-    // Sync to User collection
-    const User = require('../models/User');
+    // Sync to User collection with aligned ID
     const userCred = new User({
+      _id: student._id,
       name,
       email: email.toLowerCase(),
       password: student.password,

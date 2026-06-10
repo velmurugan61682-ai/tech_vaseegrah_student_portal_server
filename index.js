@@ -20,19 +20,24 @@ app.use((req, res, next) => {
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
-  'http://localhost:3000'
+  'http://localhost:3000',
+  'https://tech-vaseegrah-student-portal-client.vercel.app',
+  'https://tech-vaseegrah-student-portal-clien.vercel.app'
 ];
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin) || allowedOrigins.includes(origin + '/')) {
-      return callback(null, true);
-    } else {
-      // Fallback in development
+    const cleanOrigin = origin.replace(/\/+$/, '');
+    const cleanEnvClient = process.env.CLIENT_URL ? process.env.CLIENT_URL.replace(/\/+$/, '') : null;
+    
+    if (allowedOrigins.includes(cleanOrigin) || (cleanEnvClient && cleanOrigin === cleanEnvClient)) {
       return callback(null, true);
     }
+    if (/^http:\/\/localhost:\d+$/.test(cleanOrigin)) {
+      return callback(null, true);
+    }
+    return callback(null, true); // Permissive fallback supporting credentials
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
@@ -100,9 +105,24 @@ app.get('/api/health', (req, res) => {
 // Global Error Handler
 app.use((err, req, res, next) => {
   console.error('❌ Global Server Error:', err);
+  
+  if (err.code === 11000) {
+    return res.status(400).json({
+      success: false,
+      message: 'Email already registered'
+    });
+  }
+  
+  if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
+    return res.status(401).json({
+      success: false,
+      message: 'Session expired. Please login again.'
+    });
+  }
+
   res.status(err.statusCode || 500).json({
     success: false,
-    message: err.message || 'Internal Server Error'
+    message: err.message || 'Something went wrong'
   });
 });
 
