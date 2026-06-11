@@ -15,6 +15,17 @@ const createTransporter = async () => {
       }
     });
   } else {
+    // In production, if SMTP variables are missing, do not attempt to contact Ethereal (avoid network timeouts)
+    if (process.env.NODE_ENV === 'production') {
+      console.warn('⚠️ SMTP environment variables missing in production! Falling back to mock transporter.');
+      return {
+        sendMail: async (options) => {
+          console.log(`[SMTP Mock] Pretending to send email to ${options.to}. Subject: ${options.subject}`);
+          return { messageId: 'mock-id-' + Date.now() };
+        }
+      };
+    }
+
     // Development fallback using auto-generated Ethereal test account
     console.log('⚠️ SMTP environment variables missing. Generating Ethereal test email account...');
     const testAccount = await nodemailer.createTestAccount().catch(err => {

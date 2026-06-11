@@ -76,7 +76,7 @@ const seed = async () => {
       _id: admin._id,
       name: admin.name,
       email: admin.email,
-      password: admin.password,
+      password: 'Admin@123',
       role: 'admin'
     });
     await adminUser.save();
@@ -202,7 +202,7 @@ const seed = async () => {
         _id: student._id,
         name: student.name,
         email: student.email,
-        password: student.password,
+        password: 'Student@123',
         role: 'student'
       });
       await studentUser.save();
@@ -255,7 +255,9 @@ const seed = async () => {
         finalAmount,
         paymentType: i % 2 === 0 ? 'Online Payment' : 'Offline Payment',
         paymentMethod: paymentMethods[i % paymentMethods.length],
+        paymentMode: paymentMethods[i % paymentMethods.length],
         transactionId: status === 'Paid' || status === 'Refunded' ? `TXN${100000 + i}` : '',
+        transactionReference: status === 'Paid' || status === 'Refunded' ? `TXN${100000 + i}` : '',
         paymentDate,
         status,
         notes: status === 'Refunded' ? 'Refunded due to customer claim.' : `Enrollment fees for ${matchingInternship.title}.`

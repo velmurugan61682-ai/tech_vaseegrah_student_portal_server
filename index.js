@@ -87,6 +87,7 @@ app.use((req, res, next) => {
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/student', require('./routes/studentRoutes'));
+app.use('/api/students', require('./routes/studentRoutes')); // Clean REST endpoint
 app.use('/api/attendance', require('./routes/attendanceRoutes'));
 app.use('/api/tasks', require('./routes/taskRoutes'));
 app.use('/api/branches', require('./routes/branchRoutes'));
@@ -94,6 +95,8 @@ app.use('/api/reports', require('./routes/reportRoutes'));
 app.use('/api/logs', require('./routes/logRoutes'));
 app.use('/api/payments', require('./routes/paymentRoutes'));
 app.use('/api/receipts', require('./routes/receiptRoutes'));
+app.use('/api/leaves', require('./routes/leaveRoutes')); // Clean REST endpoint
+app.use('/api/dashboard', require('./routes/dashboardRoutes')); // Clean REST endpoint
 
 // Serve uploads statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

@@ -1,8 +1,7 @@
 const Receipt = require('../models/Receipt');
 const Payment = require('../models/Payment');
 const Student = require('../models/Student');
-const PaymentLog = require('../models/PaymentLog');
-const Admin = require('../models/Admin');
+const EmailLog = require('../models/EmailLog');
 const pdfService = require('../services/pdfService');
 const emailService = require('../services/emailService');
 const path = require('path');
@@ -13,7 +12,34 @@ const generateReceiptNumber = async () => {
   const dateStr = new Date().toISOString().slice(0, 7).replace('-', ''); // YYYYMM
   const count = await Receipt.countDocuments();
   const sequence = String(count + 1).padStart(4, '0');
-  return `REC-TV-${dateStr}-${sequence}`;
+  return `REC-IH-${dateStr}-${sequence}`;
+};
+
+// Helper to map DB receipt to legacy client expectations
+const mapReceipt = (r) => {
+  if (!r) return null;
+  const obj = r.toObject ? r.toObject() : r;
+  
+  obj.amountPaid = obj.amount;
+  obj.balanceDue = obj.balanceDue || 0;
+  obj.pdfPath = obj.pdfUrl || '';
+  obj.emailSent = obj.emailStatus === 'Sent';
+  obj.paymentDate = obj.issueDate;
+  
+  if (obj.studentId && typeof obj.studentId === 'object') {
+    obj.studentName = obj.studentId.name || obj.studentName || '';
+    obj.email = obj.studentId.email || obj.email || '';
+    obj.phone = obj.studentId.phone || obj.phone || '';
+    obj.courseName = obj.studentId.internshipTrack || obj.studentId.course || obj.courseName || '';
+  }
+  
+  if (obj.paymentId && typeof obj.paymentId === 'object') {
+    obj.paymentMethod = obj.paymentId.paymentMode || obj.paymentMethod || '';
+    obj.paymentStatus = obj.paymentId.status === 'Approved' ? 'Paid' : 'Pending';
+    obj.transactionId = obj.paymentId.transactionReference || obj.transactionId || '';
+  }
+
+  return obj;
 };
 
 // @desc    Get all receipts with filtering
@@ -25,32 +51,47 @@ exports.getReceipts = async (req, res) => {
     let query = {};
 
     if (status) {
-      query.paymentStatus = status;
+      // paymentStatus
+      let dbStatus = status;
+      if (dbStatus === 'Paid') dbStatus = 'Approved';
+      if (dbStatus === 'Failed') dbStatus = 'Rejected';
+      
+      const matchingPayments = await Payment.find({ status: dbStatus }).select('_id');
+      query.paymentId = { $in: matchingPayments.map(p => p._id) };
     }
 
+    let studentFilter = {};
     if (course) {
-      query.courseName = { $regex: new RegExp(course, 'i') };
+      studentFilter.$or = [
+        { internshipTrack: course },
+        { course: course }
+      ];
     }
-
+    
     if (search) {
       const searchRegex = new RegExp(search, 'i');
-      query.$or = [
-        { studentName: searchRegex },
-        { email: searchRegex },
-        { receiptNumber: searchRegex },
-        { transactionId: searchRegex }
+      studentFilter.$or = [
+        { name: searchRegex },
+        { email: searchRegex }
       ];
     }
 
+    if (course || search) {
+      const matchingStudents = await Student.find(studentFilter).select('_id');
+      query.studentId = { $in: matchingStudents.map(s => s._id) };
+    }
+
     const receipts = await Receipt.find(query)
-      .populate('studentId', 'name email branch batch')
+      .populate('studentId')
       .populate('paymentId')
       .sort({ createdAt: -1 });
 
+    const mappedData = receipts.map(mapReceipt);
+
     res.status(200).json({
       success: true,
-      count: receipts.length,
-      data: receipts
+      count: mappedData.length,
+      data: mappedData
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -63,12 +104,17 @@ exports.getReceipts = async (req, res) => {
 exports.getStudentReceipts = async (req, res) => {
   try {
     const studentId = req.user.id;
-    const receipts = await Receipt.find({ studentId }).sort({ createdAt: -1 });
+    const receipts = await Receipt.find({ studentId })
+      .populate('studentId')
+      .populate('paymentId')
+      .sort({ createdAt: -1 });
     
+    const mappedData = receipts.map(mapReceipt);
+
     res.status(200).json({
       success: true,
-      count: receipts.length,
-      data: receipts
+      count: mappedData.length,
+      data: mappedData
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -81,77 +127,53 @@ exports.getStudentReceipts = async (req, res) => {
 exports.getReceiptDetails = async (req, res) => {
   try {
     const receipt = await Receipt.findById(req.params.id)
-      .populate('emailHistory.adminId', 'name email');
+      .populate('studentId')
+      .populate('paymentId');
     
     if (!receipt) {
       return res.status(404).json({ success: false, message: 'Receipt not found' });
     }
     
-    res.status(200).json({ success: true, data: receipt });
+    res.status(200).json({ success: true, data: mapReceipt(receipt) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// @desc    Update receipt details (amount, status, notes)
+// @desc    Update receipt details (amount, status, notes) - Legacy Admin updates
 // @route   PUT /api/receipts/:id
 // @access  Private/Admin
 exports.updateReceipt = async (req, res) => {
   try {
     const { amountPaid, balanceDue, paymentStatus, notes } = req.body;
-    const receipt = await Receipt.findById(req.params.id);
+    const receipt = await Receipt.findById(req.params.id)
+      .populate('studentId')
+      .populate('paymentId');
+      
     if (!receipt) {
       return res.status(404).json({ success: false, message: 'Receipt not found' });
     }
 
-    const oldValue = receipt.toObject();
-    const admin = await Admin.findById(req.user.id);
-    const adminName = admin ? admin.name : 'System Admin';
-
-    // Track alterations
-    const changes = [];
-    if (amountPaid !== undefined && amountPaid !== receipt.amountPaid) {
-      changes.push({ field: 'amountPaid', old: receipt.amountPaid, new: amountPaid });
+    if (amountPaid !== undefined) {
+      receipt.amount = amountPaid;
       receipt.amountPaid = amountPaid;
     }
-    if (balanceDue !== undefined && balanceDue !== receipt.balanceDue) {
-      changes.push({ field: 'balanceDue', old: receipt.balanceDue, new: balanceDue });
-      receipt.balanceDue = balanceDue;
-    }
-    if (paymentStatus !== undefined && paymentStatus !== receipt.paymentStatus) {
-      changes.push({ field: 'paymentStatus', old: receipt.paymentStatus, new: paymentStatus });
-      receipt.paymentStatus = paymentStatus;
-    }
-    if (notes !== undefined && notes !== receipt.notes) {
-      receipt.notes = notes;
-    }
+    if (balanceDue !== undefined) receipt.balanceDue = balanceDue;
+    if (notes !== undefined) receipt.notes = notes;
 
-    if (changes.length > 0) {
-      // Regenerate the PDF with updated values
-      const pdfRelativePath = await pdfService.generatePDF(receipt);
-      receipt.pdfPath = pdfRelativePath;
-      await receipt.save();
+    // Save changes
+    await receipt.save();
 
-      // Log in audit trails
-      for (const change of changes) {
-        const audit = new PaymentLog({
-          adminId: req.user.id,
-          adminName,
-          action: change.field === 'amountPaid' ? 'Amount Changed' : 'Status Updated',
-          oldValue: { [change.field]: change.old },
-          newValue: { [change.field]: change.new },
-          paymentId: receipt.paymentId
-        });
-        await audit.save();
-      }
-    } else {
-      await receipt.save();
-    }
+    // Re-generate the PDF with updated values
+    const pdfRelativePath = await pdfService.generatePDF(mapReceipt(receipt));
+    receipt.pdfUrl = pdfRelativePath;
+    receipt.pdfPath = pdfRelativePath;
+    await receipt.save();
 
     res.status(200).json({
       success: true,
       message: 'Receipt details updated successfully',
-      data: receipt
+      data: mapReceipt(receipt)
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -168,28 +190,15 @@ exports.deleteReceipt = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Receipt not found' });
     }
 
-    // Remove file if exists
-    if (receipt.pdfPath) {
-      const fullPath = path.join(__dirname, '..', receipt.pdfPath);
+    // Remove PDF file if it exists
+    if (receipt.pdfUrl) {
+      const fullPath = path.join(__dirname, '..', receipt.pdfUrl);
       if (fs.existsSync(fullPath)) {
         fs.unlinkSync(fullPath);
       }
     }
 
-    const oldValue = receipt.toObject();
     await Receipt.findByIdAndDelete(req.params.id);
-
-    // Audit log deletion
-    const admin = await Admin.findById(req.user.id);
-    const audit = new PaymentLog({
-      adminId: req.user.id,
-      adminName: admin ? admin.name : 'System Admin',
-      action: 'Receipt Deleted',
-      oldValue,
-      newValue: null,
-      paymentId: receipt.paymentId
-    });
-    await audit.save();
 
     res.status(200).json({
       success: true,
@@ -205,19 +214,24 @@ exports.deleteReceipt = async (req, res) => {
 // @access  Private
 exports.generateReceiptPDF = async (req, res) => {
   try {
-    const receipt = await Receipt.findById(req.params.id);
+    const receipt = await Receipt.findById(req.params.id)
+      .populate('studentId')
+      .populate('paymentId');
+      
     if (!receipt) {
       return res.status(404).json({ success: false, message: 'Receipt not found' });
     }
 
-    const relativePath = await pdfService.generatePDF(receipt);
+    const relativePath = await pdfService.generatePDF(mapReceipt(receipt));
+    receipt.pdfUrl = relativePath;
     receipt.pdfPath = relativePath;
     await receipt.save();
 
     res.status(200).json({
       success: true,
       message: 'PDF compiled successfully',
-      pdfPath: relativePath
+      pdfPath: relativePath,
+      pdfUrl: relativePath
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -230,65 +244,88 @@ exports.generateReceiptPDF = async (req, res) => {
 exports.sendReceiptEmail = async (req, res) => {
   try {
     const { subject, customMessage } = req.body;
-    if (!subject || !customMessage) {
-      return res.status(400).json({ success: false, message: 'Please provide subject and message body' });
-    }
-
-    const receipt = await Receipt.findById(req.params.id);
+    
+    const receipt = await Receipt.findById(req.params.id)
+      .populate('studentId')
+      .populate('paymentId');
+      
     if (!receipt) {
       return res.status(404).json({ success: false, message: 'Receipt not found' });
     }
 
-    // Make sure PDF is generated
-    const pdfPathRelative = await pdfService.generatePDF(receipt);
+    // Ensure PDF is generated
+    const pdfPathRelative = await pdfService.generatePDF(mapReceipt(receipt));
+    receipt.pdfUrl = pdfPathRelative;
     receipt.pdfPath = pdfPathRelative;
+    await receipt.save();
     
     const absolutePdfPath = path.join(__dirname, '..', pdfPathRelative);
+    const recipientEmail = receipt.studentId.email;
 
-    // Replace template tags
-    const emailBody = customMessage
-      .replace(/\{\{studentName\}\}/g, receipt.studentName)
-      .replace(/\{\{receiptNumber\}\}/g, receipt.receiptNumber)
-      .replace(/\{\{courseName\}\}/g, receipt.courseName)
-      .replace(/\{\{amount\}\}/g, `₹${receipt.amountPaid.toLocaleString()}`)
-      .replace(/\{\{paymentMethod\}\}/g, receipt.paymentMethod);
+    // Fallback template values if not customized
+    const mailSubject = subject || 'Internship Fee Payment Receipt';
+    const emailBody = customMessage 
+      ? customMessage
+          .replace(/\{\{studentName\}\}/g, receipt.studentId.name)
+          .replace(/\{\{receiptNumber\}\}/g, receipt.receiptNumber)
+          .replace(/\{\{courseName\}\}/g, receipt.studentId.internshipTrack || receipt.studentId.course || 'Internship')
+          .replace(/\{\{amount\}\}/g, `₹${receipt.amount.toLocaleString()}`)
+          .replace(/\{\{paymentMethod\}\}/g, receipt.paymentId.paymentMode || 'Cash')
+      : `Dear Student,\n\nYour internship payment has been successfully verified.\n\nPlease find the attached receipt PDF.\n\nRegards,\nInternHub Accounts Team`;
 
-    // Send email with attachment
-    const emailResult = await emailService.sendEmailWithAttachment({
-      to: receipt.email,
-      subject,
-      html: emailBody,
-      attachmentPath: absolutePdfPath,
-      filename: `${receipt.receiptNumber}.pdf`
-    });
+    let emailStatus = 'Sent';
+    let errorMessage = '';
+    let emailResult = null;
 
-    receipt.emailSent = true;
-    receipt.emailHistory.push({
-      sentAt: new Date(),
-      subject,
-      content: customMessage,
-      adminId: req.user.id
-    });
+    try {
+      // Send email with attachment
+      emailResult = await emailService.sendEmailWithAttachment({
+        to: recipientEmail,
+        subject: mailSubject,
+        html: emailBody.replace(/\n/g, '<br>'),
+        attachmentPath: absolutePdfPath,
+        filename: `${receipt.receiptNumber}.pdf`
+      });
+    } catch (mailErr) {
+      emailStatus = 'Failed';
+      errorMessage = mailErr.message;
+    }
+
+    // Update Receipt status
+    receipt.emailStatus = emailStatus;
+    receipt.emailSent = emailStatus === 'Sent';
+    if (emailStatus === 'Sent') {
+      receipt.emailHistory.push({
+        sentAt: new Date(),
+        subject: mailSubject,
+        content: emailBody,
+        adminId: req.user.id
+      });
+    }
     await receipt.save();
 
-    // Log in audit logs
-    const admin = await Admin.findById(req.user.id);
-    const audit = new PaymentLog({
-      adminId: req.user.id,
-      adminName: admin ? admin.name : 'System Admin',
-      action: 'Receipt Emailed',
-      newValue: { subject, sentAt: new Date() },
-      paymentId: receipt.paymentId
+    // Save transactional log in emailLogs collection
+    const log = new EmailLog({
+      studentId: receipt.studentId._id,
+      recipientEmail,
+      subject: mailSubject,
+      body: emailBody,
+      status: emailStatus === 'Sent' ? 'Success' : 'Failed',
+      errorMessage
     });
-    await audit.save();
+    await log.save();
+
+    if (emailStatus === 'Failed') {
+      return res.status(500).json({ success: false, message: 'Email sending failed: ' + errorMessage });
+    }
 
     res.status(200).json({
       success: true,
       message: 'Receipt email sent successfully',
-      previewUrl: emailResult.previewUrl
+      previewUrl: emailResult ? emailResult.previewUrl : null
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Email sending failed: ' + error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -296,48 +333,43 @@ exports.sendReceiptEmail = async (req, res) => {
 exports.createReceiptFromPayment = async (payment) => {
   try {
     const student = await Student.findById(payment.studentId);
-    
+    if (!student) return;
+
     // Check if receipt already exists for this payment
     let receipt = await Receipt.findOne({ paymentId: payment._id });
     
-    const baseAmount = payment.amount || 0;
-    const discount = payment.discount || 0;
-    const finalAmount = payment.finalAmount || 0;
-    const balanceDue = Math.max(0, baseAmount - discount - finalAmount);
-
     if (receipt) {
-      // Update existing receipt details
-      receipt.amountPaid = payment.finalAmount;
-      receipt.balanceDue = balanceDue;
-      receipt.paymentMethod = payment.paymentMethod;
-      receipt.paymentStatus = payment.status;
-      receipt.transactionId = payment.transactionId;
-      receipt.paymentDate = payment.paymentDate;
-      receipt.notes = payment.notes || '';
+      receipt.amount = payment.amount;
+      receipt.amountPaid = payment.amount;
     } else {
-      // Auto-generate receipt number
       const receiptNumber = await generateReceiptNumber();
-
       receipt = new Receipt({
         receiptNumber,
         paymentId: payment._id,
         studentId: payment.studentId,
-        studentName: payment.studentName,
-        email: payment.email,
-        phone: payment.phone || student?.phone || '',
-        courseName: payment.internshipTitle,
-        amountPaid: payment.finalAmount,
-        balanceDue,
-        paymentMethod: payment.paymentMethod,
-        paymentStatus: payment.status,
-        transactionId: payment.transactionId,
-        paymentDate: payment.paymentDate,
-        notes: payment.notes || ''
+        amount: payment.amount,
+        amountPaid: payment.amount,
+        balanceDue: 0,
+        issueDate: payment.paymentDate || new Date(),
+        emailStatus: 'Pending',
+        studentName: student.name,
+        email: student.email,
+        phone: student.phone || '',
+        courseName: student.internshipTrack || student.course || 'Internship',
+        paymentMethod: payment.paymentMode,
+        paymentStatus: 'Paid',
+        transactionId: payment.transactionReference,
+        paymentDate: payment.paymentDate || new Date()
       });
     }
 
     // Compile PDF receipt automatically
-    const pdfRelativePath = await pdfService.generatePDF(receipt);
+    const populatedReceipt = mapReceipt(receipt);
+    populatedReceipt.studentId = student;
+    populatedReceipt.paymentId = payment;
+
+    const pdfRelativePath = await pdfService.generatePDF(populatedReceipt);
+    receipt.pdfUrl = pdfRelativePath;
     receipt.pdfPath = pdfRelativePath;
     await receipt.save();
 

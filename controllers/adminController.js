@@ -348,7 +348,7 @@ exports.addStudent = async (req, res) => {
       _id: student._id,
       name,
       email: email.toLowerCase(),
-      password: student.password,
+      password,
       role: 'student'
     });
     await userCred.save();

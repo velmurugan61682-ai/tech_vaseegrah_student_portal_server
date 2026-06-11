@@ -29,7 +29,7 @@ exports.registerAdmin = async (req, res) => {
       _id: admin._id,
       name,
       email: email.toLowerCase(),
-      password: admin.password,
+      password,
       role: 'admin'
     });
     await userCred.save();
@@ -109,7 +109,7 @@ exports.registerStudent = async (req, res) => {
       _id: student._id,
       name,
       email: email.toLowerCase(),
-      password: student.password,
+      password,
       role: 'student'
     });
     await userCred.save();
@@ -235,6 +235,46 @@ exports.getMe = async (req, res) => {
     const userObj = user.toObject();
     userObj.id = user._id; // Map id explicitly for frontend compatibility
     res.status(200).json({ success: true, user: userObj });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Change User Password
+// @route   PUT /api/auth/change-password
+// @access  Private
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Please provide current and new password' });
+    }
+
+    let user = await Admin.findById(req.user.id);
+    if (!user) {
+      user = await Student.findById(req.user.id);
+    }
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ success: false, message: 'Incorrect current password' });
+    }
+
+    user.password = newPassword; // pre-save will hash
+    await user.save();
+
+    // Sync to User collection
+    const User = require('../models/User');
+    const userCred = await User.findById(user._id);
+    if (userCred) {
+      userCred.password = newPassword;
+      await userCred.save();
+    }
+
+    res.status(200).json({ success: true, message: 'Password updated successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

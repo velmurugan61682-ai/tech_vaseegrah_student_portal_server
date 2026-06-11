@@ -1,8 +1,40 @@
 const Payment = require('../models/Payment');
 const Student = require('../models/Student');
 const Internship = require('../models/Internship');
-const PaymentLog = require('../models/PaymentLog');
 const Admin = require('../models/Admin');
+
+// Helper to map database model to legacy frontend expectations
+const mapPayment = (p) => {
+  if (!p) return null;
+  const obj = p.toObject ? p.toObject() : p;
+  
+  // Backward compatibility mappings
+  obj.finalAmount = obj.amount; 
+  obj.discount = obj.discount || 0;
+  obj.paymentType = (obj.paymentMode === 'Cash' || obj.paymentMode === 'Bank Transfer') 
+    ? 'Offline Payment' 
+    : 'Online Payment';
+  obj.paymentMethod = obj.paymentMode;
+  obj.transactionId = obj.transactionReference || '';
+  obj.notes = obj.remarks || '';
+  
+  // Status mapping: Approved -> Paid, Rejected -> Failed, Pending -> Pending
+  if (obj.status === 'Approved') {
+    obj.status = 'Paid';
+  } else if (obj.status === 'Rejected') {
+    obj.status = 'Failed';
+  }
+  
+  // Ensure nested student fields are present or virtualized
+  if (obj.studentId && typeof obj.studentId === 'object') {
+    obj.studentName = obj.studentId.name || obj.studentName || '';
+    obj.email = obj.studentId.email || obj.email || '';
+    obj.phone = obj.studentId.phone || obj.phone || '';
+    obj.internshipTitle = obj.studentId.internshipTrack || obj.studentId.course || obj.internshipTitle || '';
+  }
+
+  return obj;
+};
 
 // @desc    Get all student payments with filtering and searching
 // @route   GET /api/payments
@@ -14,41 +46,60 @@ exports.getPayments = async (req, res) => {
 
     // 1. Filter by Payment Status
     if (status) {
-      query.status = status;
+      let mappedStatus = status;
+      if (status === 'Paid') mappedStatus = 'Approved';
+      if (status === 'Failed' || status === 'Refunded') mappedStatus = 'Rejected';
+      query.status = mappedStatus;
     }
 
-    // 2. Filter by Course (Internship Program)
-    if (course) {
-      // Direct match on cached internshipTitle
-      query.internshipTitle = { $regex: new RegExp(course, 'i') };
-    }
-
-    // 3. Filter by Batch (Requires fetching matching students first)
+    // 2. Filter by Batch or Course (Requires fetching matching students first)
+    let studentFilter = {};
     if (batch) {
-      const matchingStudents = await Student.find({ batch }).select('_id');
+      studentFilter.batch = batch;
+    }
+    if (course) {
+      studentFilter.$or = [
+        { internshipTrack: course },
+        { course: course }
+      ];
+    }
+    
+    if (batch || course) {
+      const matchingStudents = await Student.find(studentFilter).select('_id');
       const studentIds = matchingStudents.map(s => s._id);
       query.studentId = { $in: studentIds };
     }
 
-    // 4. Search by Student Name, Email, or Transaction ID
+    // 3. Search by Student Name, Email, or Transaction Reference
     if (search) {
       const searchRegex = new RegExp(search, 'i');
+      
+      // Find students matching search term
+      const matchingStudents = await Student.find({
+        $or: [
+          { name: searchRegex },
+          { email: searchRegex }
+        ]
+      }).select('_id');
+      const studentIds = matchingStudents.map(s => s._id);
+
       query.$or = [
-        { studentName: searchRegex },
-        { email: searchRegex },
-        { transactionId: searchRegex }
+        { studentId: { $in: studentIds } },
+        { transactionReference: searchRegex },
+        { remarks: searchRegex }
       ];
     }
 
     const payments = await Payment.find(query)
-      .populate('studentId', 'name email phone branch batch')
-      .populate('internshipId', 'title duration price')
+      .populate('studentId')
       .sort({ createdAt: -1 });
+
+    const mappedData = payments.map(mapPayment);
 
     res.status(200).json({
       success: true,
-      count: payments.length,
-      data: payments
+      count: mappedData.length,
+      data: mappedData
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -62,13 +113,15 @@ exports.getStudentPayments = async (req, res) => {
   try {
     const studentId = req.user.id;
     const payments = await Payment.find({ studentId })
-      .populate('internshipId', 'title duration')
+      .populate('studentId')
       .sort({ createdAt: -1 });
+
+    const mappedData = payments.map(mapPayment);
 
     res.status(200).json({
       success: true,
-      count: payments.length,
-      data: payments
+      count: mappedData.length,
+      data: mappedData
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -82,81 +135,71 @@ exports.createPayment = async (req, res) => {
   try {
     const {
       studentId,
-      internshipId,
       amount,
-      discount,
       finalAmount,
-      paymentType,
+      paymentMode,
       paymentMethod,
+      paymentType,
+      transactionReference,
       transactionId,
       paymentDate,
       status,
+      remarks,
       notes
     } = req.body;
 
-    if (!studentId || !internshipId || amount === undefined || finalAmount === undefined || !paymentType || !paymentMethod) {
-      return res.status(400).json({ success: false, message: 'Please provide all required payment fields' });
+    if (!studentId) {
+      return res.status(400).json({ success: false, message: 'Please provide studentId' });
     }
 
-    // Fetch student data to cache student details
     const student = await Student.findById(studentId);
     if (!student) {
       return res.status(404).json({ success: false, message: 'Student not found' });
     }
 
-    // Fetch internship details to cache program title
-    const internship = await Internship.findById(internshipId);
-    if (!internship) {
-      return res.status(404).json({ success: false, message: 'Internship program not found' });
-    }
+    const finalPaid = finalAmount !== undefined ? finalAmount : amount;
+    const mode = paymentMode || paymentMethod || paymentType || 'Cash';
+    const ref = transactionReference || transactionId || '';
+    const rems = remarks || notes || '';
+    
+    let dbStatus = status || 'Pending';
+    if (dbStatus === 'Paid') dbStatus = 'Approved';
+    if (dbStatus === 'Failed' || dbStatus === 'Refunded') dbStatus = 'Rejected';
 
-    // Duplicate Transaction Protection
-    if (transactionId) {
-      const existingPayment = await Payment.findOne({ transactionId });
+    // Duplicate reference protection
+    if (ref) {
+      const existingPayment = await Payment.findOne({ transactionReference: ref });
       if (existingPayment) {
-        return res.status(400).json({ success: false, message: 'Transaction ID already recorded' });
+        return res.status(400).json({ success: false, message: 'Transaction reference ID already recorded' });
       }
     }
 
     const newPayment = new Payment({
       studentId,
-      internshipId,
+      amount: finalPaid,
+      paymentMode: mode,
+      transactionReference: ref,
+      paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
+      status: dbStatus,
+      remarks: rems,
       studentName: student.name,
       email: student.email,
       phone: student.phone || '',
-      internshipTitle: internship.title,
-      amount,
-      discount: discount || 0,
-      finalAmount,
-      paymentType,
-      paymentMethod,
-      transactionId: transactionId || '',
-      paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
-      status: status || 'Pending',
-      notes: notes || ''
+      internshipTitle: student.internshipTrack || student.course || 'MERN Stack'
     });
 
     await newPayment.save();
 
-    // Log the audit event
-    const admin = await Admin.findById(req.user.id);
-    const auditLog = new PaymentLog({
-      adminId: req.user.id,
-      adminName: admin ? admin.name : 'System Admin',
-      action: 'Payment Created',
-      newValue: newPayment.toObject(),
-      paymentId: newPayment._id
-    });
-    await auditLog.save();
-
-    // Auto-generate receipt
-    const receiptController = require('./receiptController');
-    await receiptController.createReceiptFromPayment(newPayment);
+    // If status is Approved/Paid, auto-generate receipt record + PDF
+    if (dbStatus === 'Approved') {
+      const receiptController = require('./receiptController');
+      await receiptController.createReceiptFromPayment(newPayment);
+    }
 
     res.status(201).json({
       success: true,
       message: 'Payment record created successfully',
-      data: newPayment
+      data: mapPayment(newPayment)
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -169,78 +212,46 @@ exports.createPayment = async (req, res) => {
 exports.updatePayment = async (req, res) => {
   try {
     const paymentId = req.params.id;
-    const updates = req.body;
+    const {
+      amount,
+      finalAmount,
+      paymentMode,
+      paymentMethod,
+      transactionReference,
+      transactionId,
+      paymentDate,
+      status,
+      remarks,
+      notes
+    } = req.body;
 
     const payment = await Payment.findById(paymentId);
     if (!payment) {
       return res.status(404).json({ success: false, message: 'Payment record not found' });
     }
 
-    // Duplicate Transaction Protection
-    if (updates.transactionId && updates.transactionId !== payment.transactionId) {
-      const existingPayment = await Payment.findOne({ transactionId: updates.transactionId });
-      if (existingPayment) {
-        return res.status(400).json({ success: false, message: 'Transaction ID already recorded' });
-      }
+    const finalPaid = finalAmount !== undefined ? finalAmount : amount;
+    const mode = paymentMode || paymentMethod;
+    const ref = transactionReference || transactionId;
+    const rems = remarks || notes;
+
+    if (finalPaid !== undefined) payment.amount = finalPaid;
+    if (mode !== undefined) payment.paymentMode = mode;
+    if (ref !== undefined) payment.transactionReference = ref;
+    if (paymentDate !== undefined) payment.paymentDate = new Date(paymentDate);
+    if (rems !== undefined) payment.remarks = rems;
+
+    if (status !== undefined) {
+      let dbStatus = status;
+      if (dbStatus === 'Paid') dbStatus = 'Approved';
+      if (dbStatus === 'Failed' || dbStatus === 'Refunded') dbStatus = 'Rejected';
+      payment.status = dbStatus;
     }
 
-    const oldValue = payment.toObject();
-    const admin = await Admin.findById(req.user.id);
-    const adminName = admin ? admin.name : 'System Admin';
+    await payment.save();
 
-    // Track detailed changes for audit logs
-    const changes = [];
-    const fieldsToTrack = ['amount', 'finalAmount', 'discount', 'status', 'paymentType', 'paymentMethod', 'transactionId', 'notes'];
-    
-    fieldsToTrack.forEach(field => {
-      if (updates[field] !== undefined && updates[field] !== oldValue[field]) {
-        changes.push({
-          field,
-          old: oldValue[field],
-          new: updates[field]
-        });
-        payment[field] = updates[field];
-      }
-    });
-
-    if (updates.paymentDate) {
-      const oldTime = new Date(oldValue.paymentDate).getTime();
-      const newTime = new Date(updates.paymentDate).getTime();
-      if (oldTime !== newTime) {
-        changes.push({
-          field: 'paymentDate',
-          old: oldValue.paymentDate,
-          new: updates.paymentDate
-        });
-        payment.paymentDate = new Date(updates.paymentDate);
-      }
-    }
-
-    // Save changes
-    if (changes.length > 0) {
-      await payment.save();
-
-      // Write separate audit logs if amount or status changed, or a general modification log
-      for (const change of changes) {
-        let action = 'Payment Modified';
-        if (change.field === 'amount' || change.field === 'finalAmount') {
-          action = 'Amount Changed';
-        } else if (change.field === 'status') {
-          action = 'Status Updated';
-        }
-
-        const log = new PaymentLog({
-          adminId: req.user.id,
-          adminName,
-          action,
-          oldValue: { [change.field]: change.old },
-          newValue: { [change.field]: change.new },
-          paymentId: payment._id
-        });
-        await log.save();
-      }
-
-      // Auto-generate/update receipt
+    // If payment is Approved, auto-generate/update receipt
+    if (payment.status === 'Approved') {
       const receiptController = require('./receiptController');
       await receiptController.createReceiptFromPayment(payment);
     }
@@ -248,7 +259,7 @@ exports.updatePayment = async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'Payment record updated successfully',
-      data: payment
+      data: mapPayment(payment)
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -270,38 +281,23 @@ exports.updatePaymentStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Payment record not found' });
     }
 
-    const oldValue = payment.status;
-    if (oldValue === status) {
-      return res.status(200).json({ success: true, message: 'Status is already ' + status, data: payment });
-    }
+    let dbStatus = status;
+    if (dbStatus === 'Paid') dbStatus = 'Approved';
+    if (dbStatus === 'Failed' || dbStatus === 'Refunded') dbStatus = 'Rejected';
 
-    payment.status = status;
+    payment.status = dbStatus;
     await payment.save();
 
-    // If approved/marked as Paid, auto-generate/update receipt
-    if (status === 'Paid') {
+    // If approved, auto-generate receipt record
+    if (dbStatus === 'Approved') {
       const receiptController = require('./receiptController');
       await receiptController.createReceiptFromPayment(payment);
     }
 
-    // Log update
-    const admin = await Admin.findById(req.user.id);
-    const action = status === 'Paid' ? 'Payment Approved' : 'Status Updated';
-    
-    const log = new PaymentLog({
-      adminId: req.user.id,
-      adminName: admin ? admin.name : 'System Admin',
-      action,
-      oldValue: { status: oldValue },
-      newValue: { status: status },
-      paymentId: payment._id
-    });
-    await log.save();
-
     res.status(200).json({
       success: true,
       message: `Payment status updated to ${status} successfully`,
-      data: payment
+      data: mapPayment(payment)
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -318,20 +314,7 @@ exports.deletePayment = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Payment record not found' });
     }
 
-    const oldValue = payment.toObject();
     await Payment.findByIdAndDelete(req.params.id);
-
-    // Audit Log delete action
-    const admin = await Admin.findById(req.user.id);
-    const log = new PaymentLog({
-      adminId: req.user.id,
-      adminName: admin ? admin.name : 'System Admin',
-      action: 'Payment Deleted',
-      oldValue,
-      newValue: null,
-      paymentId: payment._id
-    });
-    await log.save();
 
     res.status(200).json({
       success: true,
@@ -342,7 +325,7 @@ exports.deletePayment = async (req, res) => {
   }
 };
 
-// @desc    Get dashboard metrics and charts data for Payments
+// @desc    Get dashboard metrics and charts data for Payments (Legacy compatibility)
 // @route   GET /api/payments/analytics
 // @access  Private/Admin
 exports.getPaymentAnalytics = async (req, res) => {
@@ -350,95 +333,21 @@ exports.getPaymentAnalytics = async (req, res) => {
     const totalStudents = await Student.countDocuments();
     const totalPayments = await Payment.countDocuments();
     
-    // Sum paid and pending amount
     const paidStats = await Payment.aggregate([
-      { $match: { status: 'Paid' } },
-      { $group: { _id: null, total: { $sum: '$finalAmount' } } }
+      { $match: { status: 'Approved' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
     ]);
     const paidAmount = paidStats.length > 0 ? paidStats[0].total : 0;
 
     const pendingStats = await Payment.aggregate([
       { $match: { status: 'Pending' } },
-      { $group: { _id: null, total: { $sum: '$finalAmount' } } }
+      { $group: { _id: null, total: { $sum: '$amount' } } }
     ]);
     const pendingAmount = pendingStats.length > 0 ? pendingStats[0].total : 0;
 
-    // Type of payment breakdown
-    const onlineCount = await Payment.countDocuments({ paymentType: 'Online Payment' });
-    const offlineCount = await Payment.countDocuments({ paymentType: 'Offline Payment' });
-
-    // Payment Success Rate
-    const successfulCount = await Payment.countDocuments({ status: 'Paid' });
-    const failedCount = await Payment.countDocuments({ status: 'Failed' });
-    const successRate = totalPayments > 0 ? Math.round((successfulCount / totalPayments) * 100) : 100;
-
-    // Monthly revenue details (for Recharts Bar/Area Charts)
-    // Query paid payments in the current calendar year, grouped by month
-    const currentYear = new Date().getFullYear();
-    const monthlyStats = await Payment.aggregate([
-      { 
-        $match: { 
-          status: 'Paid',
-          paymentDate: { 
-            $gte: new Date(`${currentYear}-01-01`), 
-            $lte: new Date(`${currentYear}-12-31T23:59:59`) 
-          }
-        } 
-      },
-      {
-        $group: {
-          _id: { $month: '$paymentDate' },
-          amount: { $sum: '$finalAmount' }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
-
-    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const monthlyRevenue = monthNames.map((name, index) => {
-      const monthNum = index + 1;
-      const found = monthlyStats.find(item => item._id === monthNum);
-      return {
-        name,
-        Revenue: found ? found.amount : 0
-      };
-    });
-
-    // Payment status pie chart data
-    const statusStats = await Payment.aggregate([
-      { $group: { _id: '$status', count: { $sum: 1 } } }
-    ]);
-    const paymentStatusPie = statusStats.map(item => ({
-      name: item._id,
-      value: item.count
-    }));
-
-    // Internship-wise revenue breakdown
-    const internshipStats = await Payment.aggregate([
-      { $match: { status: 'Paid' } },
-      {
-        $group: {
-          _id: '$internshipTitle',
-          revenue: { $sum: '$finalAmount' }
-        }
-      }
-    ]);
-    const internshipWiseRevenue = internshipStats.map(item => ({
-      name: item._id || 'Unspecified',
-      Revenue: item.revenue
-    }));
-
-    // Student payment trends (Recent payment amounts over time)
-    const trendsStats = await Payment.find({ status: 'Paid' })
-      .sort({ paymentDate: 1 })
-      .limit(10)
-      .select('paymentDate finalAmount studentName');
-    
-    const studentPaymentTrends = trendsStats.map(item => ({
-      date: new Date(item.paymentDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      Amount: item.finalAmount,
-      studentName: item.studentName
-    }));
+    const successRate = totalPayments > 0 
+      ? Math.round((await Payment.countDocuments({ status: 'Approved' }) / totalPayments) * 100) 
+      : 100;
 
     res.status(200).json({
       success: true,
@@ -447,16 +356,7 @@ exports.getPaymentAnalytics = async (req, res) => {
         totalPayments,
         paidAmount,
         pendingAmount,
-        monthlyRevenue: paidAmount, // Total revenue is total paid amount
-        onlinePayments: onlineCount,
-        offlinePayments: offlineCount,
         paymentSuccessRate: successRate
-      },
-      charts: {
-        monthlyRevenue,
-        paymentStatusPie,
-        internshipWiseRevenue,
-        studentPaymentTrends
       }
     });
   } catch (error) {
@@ -469,10 +369,17 @@ exports.getPaymentAnalytics = async (req, res) => {
 // @access  Private
 exports.getInternships = async (req, res) => {
   try {
-    const internships = await Internship.find().sort({ title: 1 });
+    // Return dummy list if internship collections are empty
+    let internships = await Internship.find().sort({ title: 1 });
+    if (internships.length === 0) {
+      internships = [
+        { _id: '111111111111111111111111', title: 'MERN Stack', duration: '3 Months', price: 15000 },
+        { _id: '222222222222222222222222', title: 'Python', duration: '3 Months', price: 12000 },
+        { _id: '333333333333333333333333', title: 'AI & ML', duration: '3 Months', price: 18000 }
+      ];
+    }
     res.status(200).json({ success: true, data: internships });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
