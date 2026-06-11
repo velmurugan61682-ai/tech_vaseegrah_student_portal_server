@@ -14,9 +14,18 @@ const generateToken = (id) => {
 exports.registerAdmin = async (req, res) => {
   try {
     const { name, email, password, phone } = req.body;
-    if (!name || !email || !password) {
-      return res.status(400).json({ success: false, message: 'Please provide name, email, and password' });
+
+    // Body Validation
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return res.status(400).json({ success: false, message: 'Name is required and must be a valid string.' });
     }
+    if (!email || typeof email !== 'string' || !/^\S+@\S+\.\S+$/.test(email)) {
+      return res.status(400).json({ success: false, message: 'A valid email address is required.' });
+    }
+    if (!password || typeof password !== 'string' || password.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password is required and must be at least 6 characters long.' });
+    }
+
     const existing = await User.findOne({ email: email.toLowerCase() });
     if (existing) {
       return res.status(400).json({ success: false, message: 'Email already registered' });
@@ -78,9 +87,18 @@ exports.loginAdmin = async (req, res) => {
 exports.registerStudent = async (req, res) => {
   try {
     const { name, email, password, phone, college, department, branch, course, batch, internshipDuration, startDate, endDate } = req.body;
-    if (!name || !email || !password) {
-      return res.status(400).json({ success: false, message: 'Please provide name, email, and password' });
+
+    // Body Validation
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return res.status(400).json({ success: false, message: 'Name is required and must be a valid string.' });
     }
+    if (!email || typeof email !== 'string' || !/^\S+@\S+\.\S+$/.test(email)) {
+      return res.status(400).json({ success: false, message: 'A valid email address is required.' });
+    }
+    if (!password || typeof password !== 'string' || password.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password is required and must be at least 6 characters long.' });
+    }
+
     const existing = await User.findOne({ email: email.toLowerCase() });
     if (existing) {
       return res.status(400).json({ success: false, message: 'Email already registered' });
