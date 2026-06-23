@@ -4,6 +4,7 @@ const attendanceController = require('../controllers/attendanceController');
 const { verifyToken, verifyAdmin } = require('../middleware/authMiddleware');
 
 router.get('/all', verifyToken, verifyAdmin, attendanceController.getAllAttendance);
+router.get('/date/:date', verifyToken, attendanceController.getAttendanceByDate);
 router.put('/update', verifyToken, verifyAdmin, attendanceController.updateAttendance);
 router.post('/mark', verifyToken, attendanceController.markAttendance);
 router.get('/my', verifyToken, attendanceController.getMyAttendance);

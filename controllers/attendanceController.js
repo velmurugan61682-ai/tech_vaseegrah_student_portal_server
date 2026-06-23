@@ -1,6 +1,7 @@
 const Attendance = require('../models/Attendance');
 const Student = require('../models/Student');
 const Log = require('../models/Log');
+const { logActivity } = require('../services/activityLogService');
 
 const normalizeDate = (dateString) => {
   const date = dateString && dateString !== 'today' ? new Date(dateString) : new Date();
@@ -12,7 +13,7 @@ const formatTime = (dateObj) => {
   return dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 };
 
-// @desc    Get all students attendance for selected date
+// @desc    Get all students attendance for selected date (legacy query support)
 // @route   GET /api/attendance/all
 exports.getAllAttendance = async (req, res) => {
   try {
@@ -36,7 +37,7 @@ exports.getAllAttendance = async (req, res) => {
         course: s.course,
         branch: s.branch,
         batch: s.batch,
-        status: rec ? rec.status : 'unmarked',
+        status: rec ? rec.status : 'Absent',
         checkIn: rec ? rec.checkIn || '-' : '-',
         checkOut: rec ? rec.checkOut || '-' : '-',
         remarks: rec ? rec.remarks || '' : '',
@@ -50,13 +51,19 @@ exports.getAllAttendance = async (req, res) => {
   }
 };
 
-// @desc    Admin manually update student status for a date
+// @desc    Admin manually update single student status for a date
 // @route   PUT /api/attendance/update
 exports.updateAttendance = async (req, res) => {
   try {
     const { studentId, date, status, checkIn, checkOut, remarks } = req.body;
     if (!studentId || !date || !status) {
       return res.status(400).json({ success: false, message: 'Please provide studentId, date and status' });
+    }
+
+    // Capitalize status if needed
+    let formattedStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+    if (!['Present', 'Absent', 'Late'].includes(formattedStatus)) {
+      formattedStatus = 'Present';
     }
 
     const targetDate = normalizeDate(date);
@@ -66,7 +73,12 @@ exports.updateAttendance = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Student not found' });
     }
 
-    const updateFields = { status, markedAt: Date.now() };
+    const updateFields = { 
+      status: formattedStatus, 
+      branchId: studentObj.branchId,
+      markedAt: Date.now(),
+      markedByAdmin: true
+    };
     if (checkIn !== undefined) updateFields.checkIn = checkIn;
     if (checkOut !== undefined) updateFields.checkOut = checkOut;
     if (remarks !== undefined) updateFields.remarks = remarks;
@@ -80,26 +92,27 @@ exports.updateAttendance = async (req, res) => {
     // Update Student Overall attendanceRate
     const studentRecords = await Attendance.find({ studentId });
     const totalDays = studentRecords.length;
-    const presentDays = studentRecords.filter(r => r.status === 'present' || r.status === 'late').length;
+    const presentDays = studentRecords.filter(r => r.status === 'Present' || r.status === 'Late').length;
     studentObj.attendancePercentage = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 100;
     await studentObj.save();
 
     // Create Activity Log
-    const log = new Log({
-      studentId: studentObj._id,
-      studentName: studentObj.name,
-      course: studentObj.course || 'Unassigned',
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Attendance',
       action: 'attendance',
-      details: `Attendance updated to ${status} by admin for date ${targetDate.toLocaleDateString()}`
+      description: `Attendance updated to ${formattedStatus} by admin for ${studentObj.name} (Date: ${targetDate.toLocaleDateString()})`,
+      io: req.io
     });
-    await log.save().catch(err => console.error('Activity logging failed:', err));
 
     // Live Socket Alert to student
     if (req.io) {
       req.io.emit('attendance_updated', {
         studentId: studentObj._id,
         date: targetDate.toISOString().split('T')[0],
-        status,
+        status: formattedStatus,
         checkIn: record.checkIn,
         checkOut: record.checkOut
       });
@@ -111,71 +124,169 @@ exports.updateAttendance = async (req, res) => {
   }
 };
 
-// @desc    Student marks present/absent/late (Check-In or Check-Out)
+// @desc    Student self-marks attendance or Admin bulk marks branch attendance
 // @route   POST /api/attendance/mark
 exports.markAttendance = async (req, res) => {
   try {
-    const { status, type, remarks } = req.body; // type: 'checkin' | 'checkout'
-    const today = normalizeDate(new Date());
+    const userRole = req.user.role;
 
-    let record = await Attendance.findOne({ studentId: req.user.id, date: today });
-    const timeStr = formatTime(new Date());
-
-    if (type === 'checkout') {
-      if (!record) {
-        return res.status(400).json({ success: false, message: 'You must check-in first before checking out!' });
+    if (userRole === 'admin') {
+      const { branchId, date, records } = req.body;
+      if (!branchId || !date || !records || !Array.isArray(records)) {
+        return res.status(400).json({ success: false, message: 'Please provide branchId, date and records array' });
       }
-      record.checkOut = timeStr;
-      if (remarks) record.remarks = remarks;
-      await record.save();
+
+      const targetDate = normalizeDate(date);
+
+      // Verify all students belong to the selected branch (Requirement 15)
+      const studentsInBranch = await Student.find({ branchId });
+      const studentIdsInBranch = new Set(studentsInBranch.map(s => s._id.toString()));
+
+      const invalidRecords = records.filter(r => !studentIdsInBranch.has(r.studentId));
+      if (invalidRecords.length > 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Admin can mark attendance only for students belonging to the selected branch.' 
+        });
+      }
+
+      const savedRecords = [];
+      for (const rec of records) {
+        const { studentId, status } = rec;
+        // Capitalize status
+        let formattedStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+        if (!['Present', 'Absent', 'Late'].includes(formattedStatus)) {
+          formattedStatus = 'Present';
+        }
+
+        const attendance = await Attendance.findOneAndUpdate(
+          { studentId, date: targetDate },
+          {
+            branchId,
+            status: formattedStatus,
+            markedByAdmin: true,
+            markedAt: Date.now()
+          },
+          { upsert: true, new: true }
+        );
+        savedRecords.push(attendance);
+
+        // Recalculate Student overall attendanceRate
+        const studentRecords = await Attendance.find({ studentId });
+        const totalDays = studentRecords.length;
+        const presentDays = studentRecords.filter(r => r.status === 'Present' || r.status === 'Late').length;
+        const attendancePercentage = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 100;
+        await Student.findByIdAndUpdate(studentId, { attendancePercentage });
+      }
+
+      await logActivity({
+        userId: req.user.id,
+        userName: req.user.name,
+        role: req.user.role,
+        module: 'Attendance',
+        action: 'attendance',
+        description: `Bulk attendance marked for branch (Count: ${savedRecords.length}, Date: ${targetDate.toLocaleDateString()})`,
+        io: req.io
+      });
+
+      res.status(200).json({ success: true, message: 'Attendance marked successfully', count: savedRecords.length, data: savedRecords });
     } else {
-      // Check-in or general mark
-      const finalStatus = status || 'present';
-      
-      const updateFields = {
-        status: finalStatus,
-        markedByStudent: true,
-        markedAt: Date.now()
-      };
+      // Student marks self attendance
+      const { status, type, remarks } = req.body; // type: 'checkin' | 'checkout'
+      const today = normalizeDate(new Date());
 
-      if (!record) {
-        updateFields.checkIn = timeStr;
+      const studentObj = await Student.findById(req.user.id);
+      if (!studentObj) {
+        return res.status(404).json({ success: false, message: 'Student profile not found' });
       }
-      if (remarks) updateFields.remarks = remarks;
 
-      record = await Attendance.findOneAndUpdate(
-        { studentId: req.user.id, date: today },
-        updateFields,
-        { upsert: true, new: true }
-      );
-    }
+      let record = await Attendance.findOne({ studentId: req.user.id, date: today });
+      const timeStr = formatTime(new Date());
 
-    // Re-calculate Student overall attendanceRate
-    const studentObj = await Student.findById(req.user.id);
-    if (studentObj) {
+      if (type === 'checkout') {
+        if (!record) {
+          return res.status(400).json({ success: false, message: 'You must check-in first before checking out!' });
+        }
+        record.checkOut = timeStr;
+        if (remarks) record.remarks = remarks;
+        await record.save();
+      } else {
+        // Check-in or general mark
+        let finalStatus = status || 'Present';
+        // Capitalize status
+        finalStatus = finalStatus.charAt(0).toUpperCase() + finalStatus.slice(1).toLowerCase();
+        if (!['Present', 'Absent', 'Late'].includes(finalStatus)) {
+          finalStatus = 'Present';
+        }
+        
+        const updateFields = {
+          branchId: studentObj.branchId,
+          status: finalStatus,
+          markedByStudent: true,
+          markedByAdmin: false,
+          markedAt: Date.now()
+        };
+
+        if (!record) {
+          updateFields.checkIn = timeStr;
+        }
+        if (remarks) updateFields.remarks = remarks;
+
+        record = await Attendance.findOneAndUpdate(
+          { studentId: req.user.id, date: today },
+          updateFields,
+          { upsert: true, new: true }
+        );
+      }
+
+      // Re-calculate Student overall attendanceRate
       const studentRecords = await Attendance.find({ studentId: req.user.id });
       const totalDays = studentRecords.length;
-      const presentDays = studentRecords.filter(r => r.status === 'present' || r.status === 'late').length;
+      const presentDays = studentRecords.filter(r => r.status === 'Present' || r.status === 'Late').length;
       studentObj.attendancePercentage = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 100;
       await studentObj.save();
 
       // Create Activity Log
-      const log = new Log({
-        studentId: req.user.id,
-        studentName: req.user.name,
-        course: req.user.course || 'Unassigned',
+      await logActivity({
+        userId: req.user.id,
+        userName: studentObj.name,
+        role: 'student',
+        module: 'Attendance',
         action: 'attendance',
-        details: type === 'checkout' ? `Checked out at ${timeStr}` : `Checked in at ${timeStr} as ${record.status}`
+        description: type === 'checkout' ? `Checked out at ${timeStr}` : `Checked in at ${timeStr} as ${record.status}`,
+        io: req.io
       });
-      await log.save().catch(err => console.error('Activity logging failed:', err));
+
+      res.status(200).json({ 
+        success: true, 
+        message: type === 'checkout' ? `Checked out successfully` : `Checked in successfully`, 
+        record, 
+        data: record 
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get attendance records for a specific date
+// @route   GET /api/attendance/date/:date
+exports.getAttendanceByDate = async (req, res) => {
+  try {
+    const { date } = req.params;
+    const { branchId } = req.query;
+    const targetDate = normalizeDate(date);
+
+    let query = { date: targetDate };
+    if (branchId) {
+      query.branchId = branchId;
     }
 
-    res.status(200).json({ 
-      success: true, 
-      message: type === 'checkout' ? `Checked out successfully` : `Checked in successfully`, 
-      record, 
-      data: record 
-    });
+    const records = await Attendance.find(query)
+      .populate('studentId', 'name email branch batch profilePhoto')
+      .populate('branchId', 'branchName');
+
+    res.status(200).json({ success: true, records, data: records });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

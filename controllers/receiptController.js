@@ -3,6 +3,7 @@ const Payment = require('../models/Payment');
 const Student = require('../models/Student');
 const EmailLog = require('../models/EmailLog');
 const pdfService = require('../services/pdfService');
+const { logActivity } = require('../services/activityLogService');
 const emailService = require('../services/emailService');
 const path = require('path');
 const fs = require('fs');
@@ -170,6 +171,16 @@ exports.updateReceipt = async (req, res) => {
     receipt.pdfPath = pdfRelativePath;
     await receipt.save();
 
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Receipts',
+      action: 'receipt_uploaded',
+      description: `Receipt details updated for receipt "${receipt.receiptNumber}" (Student: "${receipt.studentName}")`,
+      io: req.io
+    });
+
     res.status(200).json({
       success: true,
       message: 'Receipt details updated successfully',
@@ -199,6 +210,16 @@ exports.deleteReceipt = async (req, res) => {
     }
 
     await Receipt.findByIdAndDelete(req.params.id);
+
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Receipts',
+      action: 'receipt_uploaded',
+      description: `Receipt "${receipt.receiptNumber}" deleted`,
+      io: req.io
+    });
 
     res.status(200).json({
       success: true,

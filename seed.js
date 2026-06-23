@@ -113,7 +113,7 @@ const seed = async () => {
 
     // 2. Create Branches
     console.log('🏢 Creating Branches...');
-    const branchNames = ['CSE', 'IT', 'ECE', 'EEE', 'MECH', 'CIVIL', 'AI&DS'];
+    const branchNames = ['CSE', 'ECE', 'EEE', 'MECH', 'CIVIL', 'AI&DS'];
     const branches = [];
     for (const bName of branchNames) {
       const branch = new Branch({
@@ -176,12 +176,12 @@ const seed = async () => {
     console.log('👨‍🎓 Creating Students...');
     const studentsData = [
       { name: 'John Doe', email: 'john@techvaseegrah.com', phone: '9876543211', college: 'Anna University', department: 'Computer Science', branch: 'CSE', course: 'MERN Stack', batch: '2024-26', status: 'Active' },
-      { name: 'Jane Smith', email: 'jane@techvaseegrah.com', phone: '9876543212', college: 'IIT Madras', department: 'Information Technology', branch: 'IT', course: 'MERN Stack', batch: '2024-26', status: 'Active' },
+      { name: 'Jane Smith', email: 'jane@techvaseegrah.com', phone: '9876543212', college: 'IIT Madras', department: 'Computer Science', branch: 'CSE', course: 'MERN Stack', batch: '2024-26', status: 'Active' },
       { name: 'Alice Johnson', email: 'alice@techvaseegrah.com', phone: '9876543213', college: 'PSG Tech', department: 'Electronics', branch: 'ECE', course: 'Python', batch: '2023-25', status: 'Active' },
       { name: 'Bob Wilson', email: 'bob@techvaseegrah.com', phone: '9876543214', college: 'VIT Chennai', department: 'Electronics', branch: 'ECE', course: 'Python', batch: '2023-25', status: 'At Risk' },
       { name: 'Charlie Brown', email: 'charlie@techvaseegrah.com', phone: '9876543215', college: 'SRM University', department: 'Mechanical', branch: 'MECH', course: 'Python', batch: '2024-26', status: 'Inactive' },
       { name: 'David Miller', email: 'david@techvaseegrah.com', phone: '9876543216', college: 'SSN College', department: 'Electrical', branch: 'EEE', course: 'MERN Stack', batch: '2023-25', status: 'Active' },
-      { name: 'Emma Davis', email: 'emma@techvaseegrah.com', phone: '9876543217', college: 'Sathyabama Institute', department: 'Computer Science', branch: 'CSE', course: 'AI & ML', batch: '2024-26', status: 'Active' },
+      { name: 'Emma Davis', email: 'emma@techvaseegrah.com', phone: '9876543217', college: 'Computer Science', branch: 'CSE', course: 'AI & ML', batch: '2024-26', status: 'Active' },
       { name: 'Frank Harris', email: 'frank@techvaseegrah.com', phone: '9876543218', college: 'Hindustan University', department: 'Civil', branch: 'CIVIL', course: 'Python', batch: '2023-25', status: 'Inactive' },
       { name: 'Grace Lee', email: 'grace@techvaseegrah.com', phone: '9876543219', college: 'KCG College', department: 'Data Science', branch: 'AI&DS', course: 'AI & ML', batch: '2024-26', status: 'Active' },
       { name: 'Henry Taylor', email: 'henry@techvaseegrah.com', phone: '9876543220', college: 'St. Joseph College', department: 'Data Science', branch: 'AI&DS', course: 'AI & ML', batch: '2023-25', status: 'At Risk' }
@@ -205,14 +205,20 @@ const seed = async () => {
         taskRate = 10;
       }
 
+      const branchDoc = branches.find(b => b.branchName === s.branch);
+      if (!branchDoc) {
+        throw new Error(`Branch not found for student ${s.name}: ${s.branch}`);
+      }
+
       const student = new Student({
         name: s.name,
         email: s.email,
         password: 'Student@123',
         phone: s.phone,
         college: s.college,
-        department: s.department,
+        department: s.department || '',
         branch: s.branch,
+        branchId: branchDoc._id,
         course: s.course,
         batch: s.batch,
         internshipDuration: '3 Months',
@@ -382,12 +388,14 @@ const seed = async () => {
         if (student.status === 'At Risk' && Math.random() > 0.6) {
           const att = new Attendance({
             studentId: student._id,
+            branchId: student.branchId,
             date: recordDate,
             checkIn: '',
             checkOut: '',
-            status: 'absent',
+            status: 'Absent',
             remarks: 'Unexcused absence',
-            markedByStudent: false
+            markedByStudent: false,
+            markedByAdmin: true
           });
           await att.save();
           attendanceRecords.push(att);
@@ -398,16 +406,18 @@ const seed = async () => {
         const checkIn = checkInTimes[timeIndex];
         const checkOut = checkOutTimes[timeIndex];
         const isLate = checkIn === '09:40 AM' || (timeIndex === 3 && Math.random() > 0.5);
-        const status = isLate ? 'late' : 'present';
+        const status = isLate ? 'Late' : 'Present';
 
         const att = new Attendance({
           studentId: student._id,
+          branchId: student.branchId,
           date: recordDate,
           checkIn,
           checkOut,
           status,
           remarks: isLate ? 'Checked in late due to transport delay' : 'On time',
-          markedByStudent: Math.random() > 0.5
+          markedByStudent: Math.random() > 0.5,
+          markedByAdmin: true
         });
         await att.save();
         attendanceRecords.push(att);

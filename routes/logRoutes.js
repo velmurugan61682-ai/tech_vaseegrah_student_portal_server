@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const Log = require('../models/Log');
+const ActivityLog = require('../models/ActivityLog');
 const { verifyToken, verifyAdmin } = require('../middleware/authMiddleware');
 
 // @desc    Get activity logs
@@ -12,15 +12,23 @@ router.get('/', verifyToken, verifyAdmin, async (req, res) => {
     startOfToday.setHours(0, 0, 0, 0);
 
     // Live counts for today
-    const loginsToday = await Log.countDocuments({ action: 'login', createdAt: { $gte: startOfToday } });
-    const submissionsToday = await Log.countDocuments({ action: 'task_submit', createdAt: { $gte: startOfToday } });
-    const attendanceToday = await Log.countDocuments({ action: 'attendance', createdAt: { $gte: startOfToday } });
-    const alertsCount = await Log.countDocuments({
+    const loginsToday = await ActivityLog.countDocuments({ action: 'login', createdAt: { $gte: startOfToday } });
+    const submissionsToday = await ActivityLog.countDocuments({ action: 'task_submit', createdAt: { $gte: startOfToday } });
+    const attendanceToday = await ActivityLog.countDocuments({ action: 'attendance', createdAt: { $gte: startOfToday } });
+    const alertsCount = await ActivityLog.countDocuments({
       action: { $in: ['task_rejected', 'deadline_missed', 'absent'] },
       createdAt: { $gte: startOfToday }
     });
 
-    const logs = await Log.find().sort({ createdAt: -1 }).limit(100);
+    const rawLogs = await ActivityLog.find().sort({ createdAt: -1 }).limit(100);
+
+    const logs = rawLogs.map(l => {
+      const obj = l.toObject();
+      obj.studentName = l.userName;
+      obj.details = l.description;
+      obj.course = l.role === 'admin' ? 'Admin' : 'Student';
+      return obj;
+    });
 
     res.status(200).json({
       success: true,

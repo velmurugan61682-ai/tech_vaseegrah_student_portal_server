@@ -36,3 +36,41 @@ exports.saveReportLog = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// @desc    Get branch wise attendance report
+// @route   GET /api/reports/branch-wise
+// @access  Private/Admin
+exports.getBranchWiseAttendanceReport = async (req, res) => {
+  try {
+    const Branch = require('../models/Branch');
+    const Student = require('../models/Student');
+    const Attendance = require('../models/Attendance');
+
+    const branches = await Branch.find();
+    const reportData = [];
+
+    for (const branch of branches) {
+      // Find students belonging to this branch
+      const students = await Student.find({ branchId: branch._id });
+      const studentIds = students.map(s => s._id);
+
+      // Count attendance statuses for these students
+      const present = await Attendance.countDocuments({ studentId: { $in: studentIds }, status: 'Present' });
+      const absent = await Attendance.countDocuments({ studentId: { $in: studentIds }, status: 'Absent' });
+      const late = await Attendance.countDocuments({ studentId: { $in: studentIds }, status: 'Late' });
+
+      reportData.push({
+        branchId: branch._id,
+        branchName: branch.branchName,
+        present,
+        absent,
+        late,
+        totalStudents: students.length
+      });
+    }
+
+    res.status(200).json({ success: true, data: reportData });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

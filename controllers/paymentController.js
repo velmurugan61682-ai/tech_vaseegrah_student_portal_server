@@ -2,6 +2,7 @@ const Payment = require('../models/Payment');
 const Student = require('../models/Student');
 const Internship = require('../models/Internship');
 const Admin = require('../models/Admin');
+const { logActivity } = require('../services/activityLogService');
 
 // Helper to map database model to legacy frontend expectations
 const mapPayment = (p) => {
@@ -196,6 +197,16 @@ exports.createPayment = async (req, res) => {
       await receiptController.createReceiptFromPayment(newPayment);
     }
 
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Payments',
+      action: 'payment_updated',
+      description: `Payment of ₹${finalPaid} logged for student "${student.name}" (Status: ${dbStatus})`,
+      io: req.io
+    });
+
     res.status(201).json({
       success: true,
       message: 'Payment record created successfully',
@@ -256,6 +267,16 @@ exports.updatePayment = async (req, res) => {
       await receiptController.createReceiptFromPayment(payment);
     }
 
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Payments',
+      action: 'payment_updated',
+      description: `Payment of ₹${payment.amount} updated for student "${payment.studentName}" (Status: ${payment.status})`,
+      io: req.io
+    });
+
     res.status(200).json({
       success: true,
       message: 'Payment record updated successfully',
@@ -293,6 +314,16 @@ exports.updatePaymentStatus = async (req, res) => {
       const receiptController = require('./receiptController');
       await receiptController.createReceiptFromPayment(payment);
     }
+
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Payments',
+      action: 'payment_updated',
+      description: `Payment status updated to ${status} for student "${payment.studentName}"`,
+      io: req.io
+    });
 
     res.status(200).json({
       success: true,

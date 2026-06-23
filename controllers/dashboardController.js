@@ -1,6 +1,8 @@
 const Student = require('../models/Student');
 const Payment = require('../models/Payment');
 const LeaveRequest = require('../models/LeaveRequest');
+const Branch = require('../models/Branch');
+const Attendance = require('../models/Attendance');
 
 // @desc    Get dashboard analytics
 // @route   GET /api/dashboard
@@ -12,7 +14,15 @@ exports.getDashboardStats = async (req, res) => {
     if (userRole === 'admin') {
       // 1. Core Metrics
       const totalStudents = await Student.countDocuments();
+      const totalBranches = await Branch.countDocuments();
       const totalPayments = await Payment.countDocuments();
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const presentCount = await Attendance.countDocuments({ date: today, status: 'Present' });
+      const absentCount = await Attendance.countDocuments({ date: today, status: 'Absent' });
+      const lateCount = await Attendance.countDocuments({ date: today, status: 'Late' });
       
       const paidStats = await Payment.aggregate([
         { $match: { status: 'Approved' } },
@@ -118,13 +128,14 @@ exports.getDashboardStats = async (req, res) => {
         };
       });
 
-      // For attendance board fallback metrics
-      const presentCount = await Student.countDocuments({ status: 'Active' }); // mock attendance rate
-      
       res.status(200).json({
         success: true,
         stats: {
           totalStudents,
+          totalBranches,
+          presentCount,
+          absentCount,
+          lateCount,
           totalPayments,
           paidAmount: totalRevenue,
           pendingAmount: await Payment.aggregate([
@@ -135,7 +146,8 @@ exports.getDashboardStats = async (req, res) => {
           paymentSuccessRate: totalPayments > 0 ? Math.round(((totalPayments - pendingCount) / totalPayments) * 100) : 100,
           pendingLeaveRequestsCount,
           presentToday: presentCount,
-          absentToday: totalStudents - presentCount,
+          absentToday: absentCount,
+          lateToday: lateCount,
           activeTasks: 0,
           completedTasks: 0,
           internshipProgress: 100

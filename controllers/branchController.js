@@ -1,5 +1,6 @@
 const Branch = require('../models/Branch');
 const Student = require('../models/Student');
+const { logActivity } = require('../services/activityLogService');
 
 // @desc    Get all branches with student count
 // @route   GET /api/branches
@@ -58,6 +59,17 @@ exports.createBranch = async (req, res) => {
     });
 
     await branch.save();
+
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Branches',
+      action: 'branch_created',
+      description: `Branch "${branch.branchName}" created`,
+      io: req.io
+    });
+
     res.status(201).json({ success: true, message: 'Branch created successfully', branch, data: branch });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -97,6 +109,17 @@ exports.updateBranch = async (req, res) => {
     branch.totalStudents = await Student.countDocuments({ branch: branch.branchName });
 
     await branch.save();
+
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Branches',
+      action: 'branch_updated',
+      description: `Branch "${branch.branchName}" updated`,
+      io: req.io
+    });
+
     res.status(200).json({ success: true, message: 'Branch updated successfully', branch, data: branch });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -116,6 +139,17 @@ exports.deleteBranch = async (req, res) => {
     await Student.updateMany({ branch: branch.branchName }, { branch: '' });
 
     await Branch.findByIdAndDelete(req.params.id);
+
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Branches',
+      action: 'branch_deleted',
+      description: `Branch "${branch.branchName}" deleted`,
+      io: req.io
+    });
+
     res.status(200).json({ success: true, message: 'Branch deleted successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

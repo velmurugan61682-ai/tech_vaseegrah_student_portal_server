@@ -13,6 +13,7 @@ router.get('/dashboard', verifyToken, verifyStudent, studentController.getStuden
 
 // Admin student directory endpoints (REST /api/students)
 router.get('/', verifyToken, verifyAdmin, studentController.getStudentsDirectory);
+router.get('/branch/:branchId', verifyToken, verifyAdmin, studentController.getStudentsByBranch);
 router.post('/', verifyToken, verifyAdmin, uploadImage.single('profilePhoto'), studentController.addStudent);
 router.put('/:id', verifyToken, verifyAdmin, uploadImage.single('profilePhoto'), studentController.updateStudent);
 router.delete('/:id', verifyToken, verifyAdmin, studentController.deleteStudent);

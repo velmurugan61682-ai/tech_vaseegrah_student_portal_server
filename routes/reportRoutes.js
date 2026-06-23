@@ -4,6 +4,7 @@ const reportController = require('../controllers/reportController');
 const { verifyToken, verifyAdmin } = require('../middleware/authMiddleware');
 
 router.get('/', verifyToken, verifyAdmin, reportController.getReportsHistory);
+router.get('/branch-wise', verifyToken, verifyAdmin, reportController.getBranchWiseAttendanceReport);
 router.post('/', verifyToken, verifyAdmin, reportController.saveReportLog);
 
 module.exports = router;

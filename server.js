@@ -132,6 +132,7 @@ app.use('/api/tasks', require('./routes/taskRoutes'));
 app.use('/api/branches', require('./routes/branchRoutes'));
 app.use('/api/reports', require('./routes/reportRoutes'));
 app.use('/api/logs', require('./routes/logRoutes'));
+app.use('/api/activity', require('./routes/activityRoutes'));
 app.use('/api/payments', require('./routes/paymentRoutes'));
 app.use('/api/receipts', require('./routes/receiptRoutes'));
 app.use('/api/students', require('./routes/studentRoutes')); // Clean REST endpoint

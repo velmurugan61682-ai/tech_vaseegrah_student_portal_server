@@ -9,6 +9,7 @@ const studentSchema = new mongoose.Schema({
   college: { type: String, default: '' },
   department: { type: String, default: '' },
   branch: { type: String, default: '' },
+  branchId: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', required: true },
   internshipTrack: { type: String, default: '' },
   course: { type: String, default: '' },
   batch: { type: String, default: '' },
@@ -44,6 +45,19 @@ studentSchema.pre('save', async function(next) {
     this.taskCompletionPercentage = this.taskPercentage;
   } else if (this.taskCompletionPercentage !== undefined && !this.taskPercentage) {
     this.taskPercentage = this.taskCompletionPercentage;
+  }
+
+  // Sync branch string from branchId for legacy queries
+  if (this.branchId && (this.isModified('branchId') || !this.branch)) {
+    try {
+      const Branch = mongoose.model('Branch');
+      const branchDoc = await Branch.findById(this.branchId);
+      if (branchDoc) {
+        this.branch = branchDoc.branchName;
+      }
+    } catch (err) {
+      console.error('Error syncing branch name in Student pre-save:', err);
+    }
   }
 
   if (!this.isModified('password')) return next();

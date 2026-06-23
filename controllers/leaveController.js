@@ -1,5 +1,6 @@
 const LeaveRequest = require('../models/LeaveRequest');
 const Student = require('../models/Student');
+const { logActivity } = require('../services/activityLogService');
 
 // @desc    Student applies for leave
 // @route   POST /api/leaves
@@ -22,6 +23,16 @@ exports.applyLeave = async (req, res) => {
     });
 
     await leave.save();
+
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Leave Management',
+      action: 'leave_applied',
+      description: `Leave request applied from ${new Date(fromDate).toLocaleDateString()} to ${new Date(toDate).toLocaleDateString()}`,
+      io: req.io
+    });
 
     res.status(201).json({
       success: true,
@@ -111,6 +122,19 @@ exports.reviewLeave = async (req, res) => {
     }
 
     await leave.save();
+
+    const studentObj = await Student.findById(leave.studentId);
+    const targetStudentName = studentObj ? studentObj.name : 'Student';
+
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Leave Management',
+      action: status === 'Approved' ? 'leave_approved' : 'leave_rejected',
+      description: `Leave request for ${targetStudentName} reviewed as ${status}`,
+      io: req.io
+    });
 
     res.status(200).json({
       success: true,

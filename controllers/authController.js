@@ -4,6 +4,7 @@ const Admin = require('../models/Admin');
 const Student = require('../models/Student');
 const Log = require('../models/Log');
 const User = require('../models/User');
+const { logActivity } = require('../services/activityLogService');
 
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '7d' });
@@ -76,6 +77,17 @@ exports.loginAdmin = async (req, res) => {
     }
     
     const token = generateToken(admin._id);
+    
+    await logActivity({
+      userId: admin._id,
+      userName: admin.name,
+      role: 'admin',
+      module: 'Authentication',
+      action: 'login',
+      description: `${admin.name} logged in as Admin`,
+      io: req.io
+    });
+
     res.status(200).json({
       success: true,
       token,
@@ -157,6 +169,16 @@ exports.registerStudent = async (req, res) => {
       });
     }
 
+    await logActivity({
+      userId: student._id,
+      userName: student.name,
+      role: 'student',
+      module: 'Students',
+      action: 'student_added',
+      description: `Student "${student.name}" registered`,
+      io: req.io
+    });
+
     res.status(201).json({
       success: true,
       token,
@@ -205,15 +227,15 @@ exports.loginStudent = async (req, res) => {
 
     const token = generateToken(student._id);
     
-    // Log student login action
-    const log = new Log({
-      studentId: student._id,
-      studentName: student.name,
-      course: student.course || 'Unassigned',
+    await logActivity({
+      userId: student._id,
+      userName: student.name,
+      role: 'student',
+      module: 'Authentication',
       action: 'login',
-      details: `${student.name} logged in successfully`
+      description: `${student.name} logged in successfully`,
+      io: req.io
     });
-    await log.save().catch(err => console.error('Activity logging failed:', err));
 
     res.status(200).json({
       success: true,

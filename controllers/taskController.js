@@ -3,6 +3,7 @@ const Student = require('../models/Student');
 const TaskSubmission = require('../models/TaskSubmission');
 const Log = require('../models/Log');
 const mongoose = require('mongoose');
+const { logActivity } = require('../services/activityLogService');
 
 // Recalculate student task completion percentage
 const recalculateTaskCompletion = async (studentId) => {
@@ -304,6 +305,16 @@ exports.createTask = async (req, res) => {
       });
     }
 
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Tasks',
+      action: 'task_assigned',
+      description: `Task "${task.title}" created & assigned`,
+      io: req.io
+    });
+
     res.status(201).json({ success: true, message: 'Task created successfully', task, data: task });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -406,14 +417,15 @@ exports.submitTaskSolution = async (req, res) => {
     );
 
     // Create Activity Log
-    const log = new Log({
-      studentId: req.user.id,
-      studentName: req.user.name,
-      course: req.user.course || 'Unassigned',
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Tasks',
       action: 'task_submit',
-      details: `Submitted task solution for: "${task.title}"`
+      description: `Submitted task solution for: "${task.title}"`,
+      io: req.io
     });
-    await log.save().catch(err => console.error('Activity logging failed:', err));
 
     // Socket alert to Admins
     if (req.io) {
@@ -470,16 +482,17 @@ exports.reviewTaskSubmission = async (req, res) => {
       await recalculateTaskCompletion(studentId);
 
       // Create Activity Log
-      const log = new Log({
-        studentId: studentObj._id,
-        studentName: studentObj.name,
-        course: studentObj.course || 'Unassigned',
+      await logActivity({
+        userId: req.user.id,
+        userName: req.user.name,
+        role: req.user.role,
+        module: 'Tasks',
         action: status === 'Approved' ? 'task_approved' : 'task_rejected',
-        details: status === 'Approved' 
-          ? `Task submission approved: "${task.title}"` 
-          : `Task submission rejected: "${task.title}" - Feedback: ${adminFeedback || ''}`
+        description: status === 'Approved' 
+          ? `Approved task submission: "${task.title}" for student "${studentObj.name}"` 
+          : `Rejected task submission: "${task.title}" for student "${studentObj.name}" - Feedback: ${adminFeedback || ''}`,
+        io: req.io
       });
-      await log.save().catch(err => console.error('Activity logging failed:', err));
 
       // Socket live alert to student
       if (req.io) {
@@ -518,6 +531,16 @@ exports.deleteTask = async (req, res) => {
     for (const sId of studentIds) {
       await recalculateTaskCompletion(sId);
     }
+
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Tasks',
+      action: 'task_deleted',
+      description: `Task "${task.title}" deleted`,
+      io: req.io
+    });
 
     res.status(200).json({ success: true, message: 'Task deleted successfully' });
   } catch (error) {

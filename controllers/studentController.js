@@ -1,6 +1,7 @@
 const Student = require('../models/Student');
 const Attendance = require('../models/Attendance');
 const Task = require('../models/Task');
+const { logActivity } = require('../services/activityLogService');
 
 // @desc    Get Student Dashboard Metrics
 // @route   GET /api/student/dashboard
@@ -94,6 +95,16 @@ exports.updateStudentProfile = async (req, res) => {
 
     await student.save();
     
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Students',
+      action: 'student_updated',
+      description: `Profile settings updated`,
+      io: req.io
+    });
+
     res.status(200).json({ 
       success: true, 
       message: 'Profile updated successfully', 
@@ -156,10 +167,38 @@ exports.getStudentsDirectory = async (req, res) => {
 // @access  Private/Admin
 exports.addStudent = async (req, res) => {
   try {
-    const { name, email, password, phone, college, department, branch, internshipTrack, course, batch } = req.body;
+    const { name, email, password, phone, college, department, branch, branchId, internshipTrack, course, batch } = req.body;
     
     if (!name || !email || !password) {
       return res.status(400).json({ success: false, message: 'Please fill in required fields (Name, Email, Password)' });
+    }
+
+    // Resolve branchId
+    let finalBranchId = branchId;
+    let finalBranchName = branch || '';
+    const Branch = require('../models/Branch');
+
+    if (!finalBranchId && finalBranchName) {
+      const bDoc = await Branch.findOne({ branchName: finalBranchName.toUpperCase().trim() });
+      if (bDoc) {
+        finalBranchId = bDoc._id;
+      }
+    }
+
+    if (!finalBranchId) {
+      // Find any default branch or return error
+      const defaultBranch = await Branch.findOne();
+      if (defaultBranch) {
+        finalBranchId = defaultBranch._id;
+        finalBranchName = defaultBranch.branchName;
+      } else {
+        return res.status(400).json({ success: false, message: 'No academic branches configured in database' });
+      }
+    } else {
+      const bDoc = await Branch.findById(finalBranchId);
+      if (bDoc) {
+        finalBranchName = bDoc.branchName;
+      }
     }
 
     const User = require('../models/User');
@@ -182,7 +221,8 @@ exports.addStudent = async (req, res) => {
       phone: phone || '',
       college: college || '',
       department: department || '',
-      branch: branch || '',
+      branch: finalBranchName,
+      branchId: finalBranchId,
       internshipTrack: track,
       course: track,
       batch: batch || '',
@@ -195,6 +235,9 @@ exports.addStudent = async (req, res) => {
 
     await student.save();
 
+    // Increment Branch Student counter
+    await Branch.findByIdAndUpdate(finalBranchId, { $inc: { totalStudents: 1 } });
+
     // Sync to User collection
     const userCred = new User({
       _id: student._id,
@@ -204,6 +247,16 @@ exports.addStudent = async (req, res) => {
       role: 'student'
     });
     await userCred.save();
+
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Students',
+      action: 'student_added',
+      description: `Student "${student.name}" added`,
+      io: req.io
+    });
 
     res.status(201).json({ success: true, message: 'Student registered successfully', student, data: student });
   } catch (error) {
@@ -216,11 +269,39 @@ exports.addStudent = async (req, res) => {
 // @access  Private/Admin
 exports.updateStudent = async (req, res) => {
   try {
-    const { name, email, phone, college, department, branch, internshipTrack, course, batch, status, attendancePercentage, taskPercentage, taskCompletionPercentage } = req.body;
+    const { name, email, phone, college, department, branch, branchId, internshipTrack, course, batch, status, attendancePercentage, taskPercentage, taskCompletionPercentage } = req.body;
     
     const student = await Student.findById(req.params.id);
     if (!student) {
       return res.status(404).json({ success: false, message: 'Student not found' });
+    }
+
+    const Branch = require('../models/Branch');
+
+    // Handle branch change counters
+    if (branchId && student.branchId?.toString() !== branchId.toString()) {
+      const oldBranchId = student.branchId;
+      const newBranchDoc = await Branch.findById(branchId);
+      if (newBranchDoc) {
+        student.branchId = branchId;
+        student.branch = newBranchDoc.branchName;
+        // Decrement old and increment new
+        if (oldBranchId) {
+          await Branch.findByIdAndUpdate(oldBranchId, { $inc: { totalStudents: -1 } }).catch(() => {});
+        }
+        await Branch.findByIdAndUpdate(branchId, { $inc: { totalStudents: 1 } }).catch(() => {});
+      }
+    } else if (branch && student.branch !== branch) {
+      const bDoc = await Branch.findOne({ branchName: branch.toUpperCase().trim() });
+      if (bDoc && student.branchId?.toString() !== bDoc._id.toString()) {
+        const oldBranchId = student.branchId;
+        student.branchId = bDoc._id;
+        student.branch = bDoc.branchName;
+        if (oldBranchId) {
+          await Branch.findByIdAndUpdate(oldBranchId, { $inc: { totalStudents: -1 } }).catch(() => {});
+        }
+        await Branch.findByIdAndUpdate(bDoc._id, { $inc: { totalStudents: 1 } }).catch(() => {});
+      }
     }
 
     if (name !== undefined) student.name = name;
@@ -228,7 +309,6 @@ exports.updateStudent = async (req, res) => {
     if (phone !== undefined) student.phone = phone;
     if (college !== undefined) student.college = college;
     if (department !== undefined) student.department = department;
-    if (branch !== undefined) student.branch = branch;
     
     const track = internshipTrack || course;
     if (track !== undefined) {
@@ -266,6 +346,16 @@ exports.updateStudent = async (req, res) => {
       await uCred.save();
     }
 
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Students',
+      action: 'student_updated',
+      description: `Student "${student.name}" updated`,
+      io: req.io
+    });
+
     res.status(200).json({ success: true, message: 'Student record updated successfully', student, data: student });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -280,6 +370,11 @@ exports.deleteStudent = async (req, res) => {
     const student = await Student.findById(req.params.id);
     if (!student) {
       return res.status(404).json({ success: false, message: 'Student not found' });
+    }
+
+    const Branch = require('../models/Branch');
+    if (student.branchId) {
+      await Branch.findByIdAndUpdate(student.branchId, { $inc: { totalStudents: -1 } }).catch(() => {});
     }
 
     await Student.findByIdAndDelete(req.params.id);
@@ -297,7 +392,33 @@ exports.deleteStudent = async (req, res) => {
       { $pull: { submissions: { studentId: req.params.id } } }
     );
 
+    await logActivity({
+      userId: req.user.id,
+      userName: req.user.name,
+      role: req.user.role,
+      module: 'Students',
+      action: 'student_deleted',
+      description: `Student "${student.name}" deleted`,
+      io: req.io
+    });
+
     res.status(200).json({ success: true, message: 'Student deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get Students by Branch
+// @route   GET /api/students/branch/:branchId
+// @access  Private/Admin
+exports.getStudentsByBranch = async (req, res) => {
+  try {
+    const { branchId } = req.params;
+    if (!branchId) {
+      return res.status(400).json({ success: false, message: 'Please provide branchId' });
+    }
+    const students = await Student.find({ branchId }).sort({ name: 1 });
+    res.status(200).json({ success: true, count: students.length, students, data: students });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
