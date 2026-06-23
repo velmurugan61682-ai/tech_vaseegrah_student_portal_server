@@ -3,6 +3,20 @@ const path = require('path');
 const fs = require('fs');
 
 const createTransporter = async () => {
+  // If EMAIL_USER and EMAIL_PASS are defined (Gmail SMTP with App Password)
+  if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    return nodemailer.createTransport({
+      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+  }
+
   // If production SMTP configs are defined
   if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
     return nodemailer.createTransport({
@@ -58,8 +72,9 @@ exports.sendEmailWithAttachment = async ({ to, subject, html, attachmentPath, fi
   try {
     const transporter = await createTransporter();
     
+    const senderEmail = process.env.EMAIL_USER || process.env.SMTP_USER || 'receipts@internhub.com';
     const mailOptions = {
-      from: process.env.SMTP_USER ? `"Tech Vaseegrah Receipts" <${process.env.SMTP_USER}>` : '"Tech Vaseegrah Internship" <receipts@techvaseegrah.com>',
+      from: `"InternHub Team" <${senderEmail}>`,
       to,
       subject,
       html,

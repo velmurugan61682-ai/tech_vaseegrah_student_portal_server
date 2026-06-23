@@ -1,7 +1,7 @@
 {
-  "name": "tech-vaseegrah-student-portal-server",
+  "name": "internhub-server",
   "version": "1.0.0",
-  "description": "Tech Vaseegrah Student Portal Backend Server",
+  "description": "InternHub Internship Portal Backend Server",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

@@ -59,15 +59,19 @@ exports.registerAdmin = async (req, res) => {
 exports.loginAdmin = async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log(`🔑 Admin Login Request received for: ${email}`);
     if (!email || !password) {
       return res.status(400).json({ success: false, message: 'Please provide email and password' });
     }
     const admin = await Admin.findOne({ email: email.toLowerCase() });
     if (!admin) {
+      console.log(`❌ Admin not found for email: ${email}`);
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
     const isMatch = await bcrypt.compare(password, admin.password);
+    console.log(`📊 Password comparison result for admin ${email}: ${isMatch}`);
     if (!isMatch) {
+      console.log(`❌ Incorrect password for admin: ${email}`);
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
     
@@ -183,15 +187,19 @@ exports.registerStudent = async (req, res) => {
 exports.loginStudent = async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log(`🔑 Student Login Request received for: ${email}`);
     if (!email || !password) {
       return res.status(400).json({ success: false, message: 'Please provide email and password' });
     }
     const student = await Student.findOne({ email: email.toLowerCase() });
     if (!student) {
+      console.log(`❌ Student not found for email: ${email}`);
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
     const isMatch = await bcrypt.compare(password, student.password);
+    console.log(`📊 Password comparison result for student ${email}: ${isMatch}`);
     if (!isMatch) {
+      console.log(`❌ Incorrect password for student: ${email}`);
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 

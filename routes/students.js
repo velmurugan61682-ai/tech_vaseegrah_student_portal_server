@@ -235,7 +235,7 @@ router.put('/:id', verifyToken, uploadImage.single('profileImage'), asyncHandler
         const cloudinary = require('cloudinary').v2;
         if (isCloudinaryConfigured) {
           const uploadRes = await cloudinary.uploader.upload(base64Str, {
-            folder: 'tech_vaseegrah/images'
+            folder: 'internhub/images'
           });
           return uploadRes.secure_url;
         } else {

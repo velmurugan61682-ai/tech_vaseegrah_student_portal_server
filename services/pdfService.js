@@ -22,19 +22,19 @@ exports.generatePDF = (receipt) => {
       
       // Brand Title Header
       doc.fontSize(22)
-         .fillColor('#4f46e5')
+         .fillColor('#00E6A8')
          .font('Helvetica-Bold')
-         .text('TECH VASEEGRAH', { align: 'center' });
+         .text('INTERNHUB', { align: 'center' });
       
       doc.fontSize(9)
-         .fillColor('#7c3aed')
+         .fillColor('#7C4DFF')
          .font('Helvetica-Oblique')
-         .text('Transforming Small Businesses into Smart Businesses', { align: 'center' });
+         .text('Connecting Talents with Tech Opportunities', { align: 'center' });
       
       doc.fontSize(9)
          .fillColor('#4b5563')
          .font('Helvetica')
-         .text('Thanjavur, Tamil Nadu, India', { align: 'center' });
+         .text('Cyber Space Office, India', { align: 'center' });
       
       doc.moveDown(1.2);
       doc.strokeColor('rgba(99, 102, 241, 0.25)').lineWidth(1).moveTo(40, doc.y).lineTo(doc.page.width - 40, doc.y).stroke();
@@ -58,7 +58,7 @@ exports.generatePDF = (receipt) => {
       doc.fontSize(8).fillColor('#6b7280').font('Helvetica');
       doc.text('ENROLLMENT ID:', 400, initialY);
       doc.fontSize(10).fillColor('#111827').font('Helvetica-Bold');
-      doc.text(enrollId ? `TV-${enrollId.substring(18).toUpperCase()}` : 'N/A', 400, initialY + 12);
+      doc.text(enrollId ? `IH-${enrollId.substring(18).toUpperCase()}` : 'N/A', 400, initialY + 12);
       
       doc.moveDown(2.2);
       const currentY = doc.y;
@@ -112,9 +112,9 @@ exports.generatePDF = (receipt) => {
       
       // Approved Badge stamp
       const stampY = sumY;
-      doc.rect(40, stampY, 130, 50).stroke('rgba(16, 185, 129, 0.4)');
-      doc.fontSize(10).fillColor('#10b981').font('Helvetica-Bold').text('APPROVED', 45, stampY + 8, { align: 'center', width: 120 });
-      doc.fontSize(7).fillColor('#059669').font('Helvetica-Oblique').text('Tech Vaseegrah Accounts', 45, stampY + 22, { align: 'center', width: 120 });
+      doc.rect(40, stampY, 130, 50).stroke('rgba(0, 230, 168, 0.4)');
+      doc.fontSize(10).fillColor('#00E6A8').font('Helvetica-Bold').text('APPROVED', 45, stampY + 8, { align: 'center', width: 120 });
+      doc.fontSize(7).fillColor('#00E6A8').font('Helvetica-Oblique').text('InternHub Accounts Division', 45, stampY + 22, { align: 'center', width: 120 });
       doc.fontSize(7).fillColor('#6b7280').font('Helvetica').text(`Status: ${receipt.paymentStatus}`, 45, stampY + 34, { align: 'center', width: 120 });
       
       // QR verification code block
@@ -132,7 +132,7 @@ exports.generatePDF = (receipt) => {
       doc.fontSize(7)
          .fillColor('#9ca3af')
          .font('Helvetica')
-         .text('This transaction receipt is verified and certified by Tech Vaseegrah Accounts Division, Thanjavur, Tamil Nadu. For questions regarding the audit ledger, contact accounts@techvaseegrah.com.', 40, doc.page.height - 65, { align: 'center', width: doc.page.width - 80 });
+         .text('This transaction receipt is verified and certified by the InternHub Accounts Division. For questions regarding the audit ledger, contact support@internhub.com.', 40, doc.page.height - 65, { align: 'center', width: doc.page.width - 80 });
       
       doc.end();
       

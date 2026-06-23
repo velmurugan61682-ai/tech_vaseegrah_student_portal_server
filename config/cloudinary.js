@@ -25,7 +25,7 @@ if (isCloudinaryConfigured) {
   const imageStorage = new CloudinaryStorage({
     cloudinary,
     params: { 
-      folder: 'tech_vaseegrah/images', 
+      folder: 'internhub/images', 
       allowed_formats: ['jpg','jpeg','png','webp'], 
       transformation: [{ width: 800, crop: 'limit' }] 
     }
@@ -34,7 +34,7 @@ if (isCloudinaryConfigured) {
   const documentStorage = new CloudinaryStorage({
     cloudinary,
     params: { 
-      folder: 'tech_vaseegrah/documents', 
+      folder: 'internhub/documents', 
       allowed_formats: ['pdf','doc','docx'], 
       resource_type: 'raw' 
     }

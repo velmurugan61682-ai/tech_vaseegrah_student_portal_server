@@ -59,27 +59,57 @@ const seed = async () => {
     await Log.deleteMany({});
     console.log('🧹 Cleaned database collections');
 
-    // 1. Create Admin
-    console.log('👤 Creating Admin...');
-    const admin = new Admin({
-      name: 'Super Admin',
-      email: 'admin@techvaseegrah.com',
-      password: 'Admin@123',
-      phone: '+919876543210',
-      role: 'admin'
-    });
-    await admin.save();
-    console.log('👤 Admin created');
+    // 1. Create Admins
+    console.log('👤 Creating Admins...');
+    const adminsToSeed = [
+      {
+        name: 'Super Admin',
+        email: 'admin@techvaseegrah.com',
+        password: 'Admin@123',
+        phone: '+919876543210',
+        role: 'admin'
+      },
+      {
+        name: 'Admin 1',
+        email: 'admin1@example.com',
+        password: 'Admin@123',
+        phone: '',
+        role: 'admin'
+      },
+      {
+        name: 'Admin 2',
+        email: 'admin2@example.com',
+        password: 'Admin@123',
+        phone: '',
+        role: 'admin'
+      },
+      {
+        name: 'Admin 3',
+        email: 'admin3@example.com',
+        password: 'Admin@123',
+        phone: '',
+        role: 'admin'
+      }
+    ];
 
-    // Sync admin to User collection with aligned ID
-    const adminUser = new User({
-      _id: admin._id,
-      name: admin.name,
-      email: admin.email,
-      password: 'Admin@123',
-      role: 'admin'
-    });
-    await adminUser.save();
+    const seededAdmins = [];
+    for (const adm of adminsToSeed) {
+      const adminDoc = new Admin(adm);
+      await adminDoc.save();
+      
+      // Sync admin to User collection with aligned ID
+      const adminUser = new User({
+        _id: adminDoc._id,
+        name: adminDoc.name,
+        email: adminDoc.email,
+        password: adm.password,
+        role: 'admin'
+      });
+      await adminUser.save();
+      seededAdmins.push(adminDoc);
+    }
+    const admin = seededAdmins[0]; // Maintain reference for legacy variables
+    console.log(`👤 Seeded ${seededAdmins.length} admins successfully.`);
 
     // 2. Create Branches
     console.log('🏢 Creating Branches...');
@@ -476,7 +506,7 @@ const seed = async () => {
     const notif1 = new Notification({
       recipient: students[0]._id,
       recipientModel: 'Student',
-      title: 'Welcome to Tech Vaseegrah Student Portal',
+      title: 'Welcome to InternHub Student Portal',
       message: 'Your student portal access is fully set up. Good luck with your MERN Stack internship track!',
       isRead: false
     });

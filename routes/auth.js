@@ -217,7 +217,7 @@ router.post('/student/register', asyncHandler(async (req, res) => {
 // @route   POST /api/auth/admin/seed
 // @access  Public
 router.post('/admin/seed', asyncHandler(async (req, res) => {
-  const seedEmail = 'admin@techvaseegrah.com';
+  const seedEmail = 'admin@internhub.com';
   let admin = await Admin.findOne({ email: seedEmail });
   
   if (!admin) {

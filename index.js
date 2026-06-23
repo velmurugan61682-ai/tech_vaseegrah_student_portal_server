@@ -6,6 +6,8 @@ const socketIO = require('socket.io');
 require('dotenv').config();
 
 const connectDB = require('./config/db');
+const Admin = require('./models/Admin');
+const User = require('./models/User');
 
 // Initialize Express
 const app = express();
@@ -47,8 +49,46 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Connect to Database
-connectDB();
+// Auto-seed helper for default admins
+const seedDefaultAdmins = async () => {
+  try {
+    const defaultAdmins = [
+      { name: 'Admin 1', email: 'admin1@example.com', password: 'Admin@123' },
+      { name: 'Admin 2', email: 'admin2@example.com', password: 'Admin@123' },
+      { name: 'Admin 3', email: 'admin3@example.com', password: 'Admin@123' }
+    ];
+
+    for (const defAdmin of defaultAdmins) {
+      const exists = await Admin.findOne({ email: defAdmin.email.toLowerCase() });
+      if (!exists) {
+        const adminDoc = new Admin({
+          name: defAdmin.name,
+          email: defAdmin.email.toLowerCase(),
+          password: defAdmin.password,
+          role: 'admin'
+        });
+        await adminDoc.save();
+
+        const adminUser = new User({
+          _id: adminDoc._id,
+          name: adminDoc.name,
+          email: adminDoc.email,
+          password: defAdmin.password,
+          role: 'admin'
+        });
+        await adminUser.save();
+        console.log(`👤 Auto-seeded default admin account: ${defAdmin.email}`);
+      }
+    }
+  } catch (err) {
+    console.error('❌ Error auto-seeding default admins:', err);
+  }
+};
+
+// Connect to Database and Seed Default Admins
+connectDB().then(() => {
+  seedDefaultAdmins();
+});
 
 // Create HTTP Server for Socket.IO binding
 const server = http.createServer(app);
@@ -131,7 +171,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start Server
-let PORT = parseInt(process.env.PORT, 10) || 5050;
+let PORT = parseInt(process.env.PORT, 10) || 5051;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
@@ -142,6 +182,15 @@ server.on('error', (err) => {
     console.log(`Port ${PORT - 1} busy, trying ${PORT}`);
     server.listen(PORT);
   }
+});
+
+// Global Exception Handlers to prevent crashes from unhandled errors
+process.on('uncaughtException', (err) => {
+  console.error('❌ CRITICAL: Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ CRITICAL: Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
 process.on('SIGTERM', () => server.close());

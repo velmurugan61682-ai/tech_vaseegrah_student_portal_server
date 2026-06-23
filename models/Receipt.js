@@ -8,7 +8,7 @@ const receiptSchema = new mongoose.Schema({
   amountPaid: { type: Number, default: 0 }, // legacy compatibility
   balanceDue: { type: Number, default: 0 }, // legacy compatibility
   issueDate: { type: Date, default: Date.now },
-  emailStatus: { type: String, enum: ['Pending', 'Sent', 'Failed'], default: 'Pending' },
+  emailStatus: { type: String, enum: ['Pending', 'Sent', 'Failed', 'PENDING', 'SENT', 'FAILED'], default: 'PENDING' },
   pdfUrl: { type: String, default: '' },
   
   // Legacy compatibility fields
@@ -49,12 +49,16 @@ receiptSchema.pre('save', function(next) {
   }
 
   // Sync emailStatus & emailSent
-  if (this.emailStatus === 'Sent') {
+  if (this.emailStatus === 'SENT' || this.emailStatus === 'Sent') {
     this.emailSent = true;
-  } else if (this.emailSent) {
-    this.emailStatus = 'Sent';
-  } else if (this.emailStatus === 'Failed') {
+    this.emailStatus = 'SENT';
+  } else if (this.emailStatus === 'FAILED' || this.emailStatus === 'Failed') {
     this.emailSent = false;
+    this.emailStatus = 'FAILED';
+  } else if (this.emailSent) {
+    this.emailStatus = 'SENT';
+  } else {
+    this.emailStatus = 'PENDING';
   }
 
   // Sync pdfUrl & pdfPath

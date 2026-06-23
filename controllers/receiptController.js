@@ -23,7 +23,7 @@ const mapReceipt = (r) => {
   obj.amountPaid = obj.amount;
   obj.balanceDue = obj.balanceDue || 0;
   obj.pdfPath = obj.pdfUrl || '';
-  obj.emailSent = obj.emailStatus === 'Sent';
+  obj.emailSent = obj.emailStatus === 'SENT' || obj.emailStatus === 'Sent';
   obj.paymentDate = obj.issueDate;
   
   if (obj.studentId && typeof obj.studentId === 'object') {
@@ -263,17 +263,19 @@ exports.sendReceiptEmail = async (req, res) => {
     const recipientEmail = receipt.studentId.email;
 
     // Fallback template values if not customized
-    const mailSubject = subject || 'Internship Fee Payment Receipt';
-    const emailBody = customMessage 
-      ? customMessage
-          .replace(/\{\{studentName\}\}/g, receipt.studentId.name)
-          .replace(/\{\{receiptNumber\}\}/g, receipt.receiptNumber)
-          .replace(/\{\{courseName\}\}/g, receipt.studentId.internshipTrack || receipt.studentId.course || 'Internship')
-          .replace(/\{\{amount\}\}/g, `₹${receipt.amount.toLocaleString()}`)
-          .replace(/\{\{paymentMethod\}\}/g, receipt.paymentId.paymentMode || 'Cash')
-      : `Dear Student,\n\nYour internship payment has been successfully verified.\n\nPlease find the attached receipt PDF.\n\nRegards,\nInternHub Accounts Team`;
+    const mailSubject = subject || 'InternHub Payment Receipt';
+    const templateMessage = customMessage || `Hello {{studentName}},\n\nYour payment has been verified successfully.\n\nReceipt Number:\n{{receiptNo}}\n\nAmount Paid:\n₹{{amount}}\n\nThe PDF receipt is attached with this email.\n\nThank you.\n\nRegards,\nInternHub Team`;
 
-    let emailStatus = 'Sent';
+    const emailBody = templateMessage
+      .replace(/\{\{studentName\}\}/g, receipt.studentId.name)
+      .replace(/\{\{receiptNo\}\}/g, receipt.receiptNumber)
+      .replace(/\{\{receiptNumber\}\}/g, receipt.receiptNumber)
+      .replace(/\{\{amount\}\}/g, receipt.amount.toLocaleString())
+      .replace(/\{\{amountPaid\}\}/g, receipt.amount.toLocaleString())
+      .replace(/\{\{courseName\}\}/g, receipt.studentId.internshipTrack || receipt.studentId.course || 'Internship')
+      .replace(/\{\{paymentMethod\}\}/g, receipt.paymentId.paymentMode || 'Cash');
+
+    let emailStatus = 'SENT';
     let errorMessage = '';
     let emailResult = null;
 
@@ -287,14 +289,14 @@ exports.sendReceiptEmail = async (req, res) => {
         filename: `${receipt.receiptNumber}.pdf`
       });
     } catch (mailErr) {
-      emailStatus = 'Failed';
+      emailStatus = 'FAILED';
       errorMessage = mailErr.message;
     }
 
     // Update Receipt status
     receipt.emailStatus = emailStatus;
-    receipt.emailSent = emailStatus === 'Sent';
-    if (emailStatus === 'Sent') {
+    receipt.emailSent = emailStatus === 'SENT';
+    if (emailStatus === 'SENT') {
       receipt.emailHistory.push({
         sentAt: new Date(),
         subject: mailSubject,
@@ -310,12 +312,12 @@ exports.sendReceiptEmail = async (req, res) => {
       recipientEmail,
       subject: mailSubject,
       body: emailBody,
-      status: emailStatus === 'Sent' ? 'Success' : 'Failed',
+      status: emailStatus === 'SENT' ? 'Success' : 'Failed',
       errorMessage
     });
     await log.save();
 
-    if (emailStatus === 'Failed') {
+    if (emailStatus === 'FAILED') {
       return res.status(500).json({ success: false, message: 'Email sending failed: ' + errorMessage });
     }
 
@@ -351,7 +353,7 @@ exports.createReceiptFromPayment = async (payment) => {
         amountPaid: payment.amount,
         balanceDue: 0,
         issueDate: payment.paymentDate || new Date(),
-        emailStatus: 'Pending',
+        emailStatus: 'PENDING',
         studentName: student.name,
         email: student.email,
         phone: student.phone || '',
@@ -371,7 +373,57 @@ exports.createReceiptFromPayment = async (payment) => {
     const pdfRelativePath = await pdfService.generatePDF(populatedReceipt);
     receipt.pdfUrl = pdfRelativePath;
     receipt.pdfPath = pdfRelativePath;
+    
+    // Save initially
     await receipt.save();
+
+    // Send PDF receipt attachment to the student's real email address.
+    const absolutePdfPath = path.join(__dirname, '..', pdfRelativePath);
+    const mailSubject = 'InternHub Payment Receipt';
+    const emailBody = `Hello ${student.name},\n\nYour payment has been verified successfully.\n\nReceipt Number:\n${receipt.receiptNumber}\n\nAmount Paid:\n₹${payment.amount.toLocaleString()}\n\nThe PDF receipt is attached with this email.\n\nThank you.\n\nRegards,\nInternHub Team`;
+
+    console.log(`📧 Sending automatic payment receipt to: ${student.email}`);
+    let emailStatus = 'SENT';
+    let errorMessage = '';
+
+    try {
+      await emailService.sendEmailWithAttachment({
+        to: student.email,
+        subject: mailSubject,
+        html: emailBody.replace(/\n/g, '<br>'),
+        attachmentPath: absolutePdfPath,
+        filename: `${receipt.receiptNumber}.pdf`
+      });
+      console.log(`✅ Automatic email dispatch succeeded for ${receipt.receiptNumber}`);
+    } catch (err) {
+      console.error(`❌ Automatic email dispatch failed for ${receipt.receiptNumber}:`, err);
+      emailStatus = 'FAILED';
+      errorMessage = err.message;
+    }
+
+    // Update database status after sendMail() completion
+    receipt.emailStatus = emailStatus;
+    receipt.emailSent = emailStatus === 'SENT';
+    if (emailStatus === 'SENT') {
+      receipt.emailHistory.push({
+        sentAt: new Date(),
+        subject: mailSubject,
+        content: emailBody,
+        adminId: payment.adminId || null
+      });
+    }
+    await receipt.save();
+
+    // Log the transaction
+    const log = new EmailLog({
+      studentId: student._id,
+      recipientEmail: student.email,
+      subject: mailSubject,
+      body: emailBody,
+      status: emailStatus === 'SENT' ? 'Success' : 'Failed',
+      errorMessage
+    });
+    await log.save();
 
     console.log(`✅ Automatic receipt synced: ${receipt.receiptNumber}`);
     return receipt;
